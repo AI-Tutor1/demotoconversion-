@@ -396,3 +396,44 @@ These were not in the original V4 / Phase 1 history. They surfaced during Supaba
   npm run dev  # restart after build
   ```
 - **Occurrences:** Step 6 verification (twice), post-cleanup commit (62c3e05)
+
+### BUG-013: Duplicate INSERT from React Strict Mode × impure updater
+- **Severity:** High — every analyst-form submit created TWO DB rows with adjacent ids
+- **Symptom:** Student "Ahmed Shaheer" or "dsfg" appeared twice on the dashboard; DB query showed `ids=[N, N+1]` with created_at within microseconds
+- **Root cause:** The analyst form's submit handler called `Date.now()` *inside* the `setDemos` updater. React Strict Mode deliberately invokes state updaters twice in dev to flag impurity; each invocation produced a Demo with a different `id` (off by 1 ms), so the store's `shouldFire('insert:' + id)` hash dedup saw two distinct hashes and fired INSERT twice.
+- **Fix:** Hoist `Date.now()` to `const now = Date.now()` BEFORE `setDemos`, build the whole `newDemo` object once, then pass it into the updater as a captured constant. Both strict-mode invocations now use the same id → dedup catches the second. Migration commit `2e6bd05`.
+- **Secondary defense:** Added `processedRealtimeIds: useRef<Set<number>>` in the store's realtime INSERT handler to drop any event whose id was already processed.
+- **GUARDRAIL:** State updater functions must be PURE. Never call `Date.now()`, `Math.random()`, `uuid()`, or any side-effect inside a `setState(prev => …)` callback. Compute impure values once, capture as `const`, then pass the captured value into the updater.
+
+---
+
+## Part 11: Phase 2 Completion Record
+
+**Date:** April 2026
+**Status:** Complete — all 6 steps verified
+
+### What was delivered:
+- 7 Supabase tables (demos, teachers, users, pour_issues, demo_drafts, agent_configs, task_queue)
+- 12 SQL migrations (sequential, no gaps)
+- 19 RLS policies with SECURITY DEFINER helper to avoid recursion
+- 3 seeded users (manager, analyst, sales_agent) with email/password auth
+- Login page with Apple design system styling
+- Middleware for session checking and role-based route protection
+- Store refactor: Supabase fetch on mount, optimistic writes with rollback, Realtime subscriptions
+- Transform layer (snake_case DB ↔ camelCase frontend)
+- Sales agent assignment from users table (not hardcoded constants)
+- Role-filtered nav (analysts can't see Sales, sales can't see Analyst)
+- Contextual empty states per role
+
+### Bugs found and fixed during Phase 2:
+- BUG-009: GoTrue null token columns (auth sign-in crash)
+- BUG-010: RLS infinite recursion on users table
+- BUG-011: Analyst SELECT too permissive (leaked all demos to all roles)
+- BUG-012: .next cache corruption from concurrent build/dev
+- BUG-013: Duplicate INSERT from React Strict Mode (Date.now() in state updater)
+
+### What's ready for Phase 3:
+- demo_drafts table exists (empty, waiting for AI agent output)
+- agent_configs table exists (empty, waiting for prompt configuration)
+- task_queue table exists (empty, waiting for Celery task tracking)
+- PROMPTS section in CONTEXT.md has production-ready system prompts for all 7 agents
