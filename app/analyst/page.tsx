@@ -57,7 +57,7 @@ export default function AnalystPage() {
       status: "Pending" as const, suggestions: f.suggestions, improvement: f.improvement,
       agent: "", comments: "", verbatim: "", acctType: "", link: "",
       recording: f.recording, marketing: false, ts: Date.now(),
-      workflowStage: "pending_sales",
+      workflowStage: "pending_sales", salesAgentId: null,
     }, ...p]);
     logActivity("submitted", "Analyst", student + " demo");
     flash("Demo submitted to sales queue");

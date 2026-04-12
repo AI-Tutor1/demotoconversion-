@@ -6,14 +6,14 @@ import { TEACHERS, AGENTS, ACCT_TYPES, MUTED, BLUE, LIGHT_GRAY } from "@/lib/typ
 import { ageDays, ageColor, ageTextColor, formatMonth, exportCSV } from "@/lib/utils";
 
 export default function SalesPage() {
-  const { rangedDemos, setDemos, flash, setConfirm, logActivity } = useStore();
+  const { rangedDemos, setDemos, flash, setConfirm, logActivity, salesAgents } = useStore();
   const [selDemo, setSelDemo] = useState<number|null>(null);
   const [bulkSel, setBulkSel] = useState<number[]>([]);
   const [fStatus, setFStatus] = useState("All");
   const [fTeacher, setFTeacher] = useState("");
   const [fAgent, setFAgent] = useState("");
   const [sort, setSort] = useState("date-desc");
-  const [sf, setSf] = useState({status:"Converted",agent:"",contact:"",comments:"",verbatim:"",marketing:false,link:"",acctType:""});
+  const [sf, setSf] = useState({status:"Converted",salesAgentId:"",comments:"",verbatim:"",marketing:false,link:"",acctType:""});
 
   const filtered = useMemo(() => {
     let d = rangedDemos.filter(x => {
@@ -44,11 +44,13 @@ export default function SalesPage() {
 
   const submitSales = () => {
     if (!selDemo || !sel) return;
+    const selectedAgent = salesAgents.find((a) => a.id === sf.salesAgentId);
+    const agentName = selectedAgent?.full_name ?? "";
     setConfirm({ title: "Mark as " + sf.status + "?", msg: "Change " + sel.student + " status.", onConfirm: () => {
-      setDemos(p => p.map(d => d.id === selDemo ? {...d, status: sf.status as "Converted"|"Not Converted"|"Pending", agent: sf.agent, comments: sf.comments, verbatim: sf.verbatim, link: sf.link, acctType: sf.acctType, marketing: sf.marketing} : d));
-      logActivity(sf.status === "Converted" ? "converted" : "marked not converted", sf.agent || "Sales", sel.student);
+      setDemos(p => p.map(d => d.id === selDemo ? {...d, status: sf.status as "Converted"|"Not Converted"|"Pending", agent: agentName, salesAgentId: sf.salesAgentId || null, comments: sf.comments, verbatim: sf.verbatim, link: sf.link, acctType: sf.acctType, marketing: sf.marketing} : d));
+      logActivity(sf.status === "Converted" ? "converted" : "marked not converted", agentName || "Sales", sel.student);
       flash("Demo marked as " + sf.status); setSelDemo(null);
-      setSf({status:"Converted",agent:"",contact:"",comments:"",verbatim:"",marketing:false,link:"",acctType:""});
+      setSf({status:"Converted",salesAgentId:"",comments:"",verbatim:"",marketing:false,link:"",acctType:""});
     }});
   };
 
@@ -138,7 +140,12 @@ export default function SalesPage() {
               <div className="section-label" style={{marginBottom:10}}>Sales input</div>
               <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
                 <Field label="Conversion status"><select className="apple-input apple-select" value={sf.status} onChange={e => setSf(p => ({...p,status:e.target.value}))}><option>Converted</option><option>Not Converted</option><option>Pending</option></select></Field>
-                <Field label="Sales agent"><select className="apple-input apple-select" value={sf.agent} onChange={e => setSf(p => ({...p,agent:e.target.value}))}><option value="">Select...</option>{AGENTS.map(a => <option key={a}>{a}</option>)}</select></Field>
+                <Field label="Sales agent">
+                  <select className="apple-input apple-select" value={sf.salesAgentId} onChange={e => setSf(p => ({...p,salesAgentId:e.target.value}))}>
+                    <option value="">Unassigned</option>
+                    {salesAgents.map(a => <option key={a.id} value={a.id}>{a.full_name}</option>)}
+                  </select>
+                </Field>
               </div>
               <Field label="Sales comments"><textarea className="apple-input apple-textarea" placeholder="Analysis..." value={sf.comments} onChange={e => setSf(p => ({...p,comments:e.target.value}))}/></Field>
               <Field label="Student review (verbatim)"><textarea className="apple-input apple-textarea" placeholder="Exact student words..." value={sf.verbatim} onChange={e => setSf(p => ({...p,verbatim:e.target.value}))}/></Field>

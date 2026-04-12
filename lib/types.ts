@@ -46,6 +46,7 @@ export interface Demo {
   marketing: boolean;
   ts: number;
   workflowStage: WorkflowStage;
+  salesAgentId: string | null;
 }
 
 export interface ActivityEntry {

@@ -175,12 +175,27 @@ export default function Nav() {
 
             {/* User menu */}
             {user && (
-              <div ref={userRef} style={{ position: "relative" }}>
+              <div ref={userRef} style={{ position: "relative", marginLeft: 4 }}>
                 <button
                   onClick={() => setUserOpen((p) => !p)}
-                  className="nav-icon-btn"
                   title={user.email}
-                  style={{ fontSize: 12, fontWeight: 600, color: "rgba(255,255,255,.85)" }}
+                  style={{
+                    width: 32,
+                    height: 32,
+                    borderRadius: "50%",
+                    background: "#0071e3",
+                    color: "#fff",
+                    border: "none",
+                    cursor: "pointer",
+                    fontSize: 13,
+                    fontWeight: 600,
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    padding: 0,
+                    lineHeight: 1,
+                    flexShrink: 0,
+                  }}
                 >
                   {initial}
                 </button>

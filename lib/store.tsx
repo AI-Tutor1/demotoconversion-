@@ -46,6 +46,7 @@ interface StoreContextType {
   ) => void;
   loading: boolean;
   user: UserProfile | null;
+  salesAgents: UserProfile[];
   stats: {
     total: number;
     converted: number;
@@ -88,6 +89,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const [confirm, setConfirm] = useState<StoreContextType["confirm"]>(null);
   const [activity, setActivity] = useState<ActivityEntry[]>(SEED_ACTIVITY);
   const [user, setUser] = useState<UserProfile | null>(null);
+  const [salesAgents, setSalesAgents] = useState<UserProfile[]>([]);
 
   const writeHashes = useRef<Map<string, number>>(new Map());
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -296,18 +298,19 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     } = await supabase.auth.getUser();
     if (!authUser) {
       setUser(null);
+      setSalesAgents([]);
       return;
     }
-    const { data, error } = await supabase
-      .from("users")
-      .select("id, email, role, full_name")
-      .eq("id", authUser.id)
-      .single();
-    if (error || !data) {
+    const [profileRes, agentsRes] = await Promise.all([
+      supabase.from("users").select("id, email, role, full_name").eq("id", authUser.id).single(),
+      supabase.from("users").select("id, email, role, full_name").eq("role", "sales_agent").eq("is_active", true),
+    ]);
+    if (profileRes.error || !profileRes.data) {
       setUser(null);
-      return;
+    } else {
+      setUser(profileRes.data as UserProfile);
     }
-    setUser(data as UserProfile);
+    setSalesAgents((agentsRes.data as UserProfile[] | null) ?? []);
   }, []);
 
   useEffect(() => {
@@ -322,6 +325,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       } else if (event === "SIGNED_OUT") {
         setDemosRaw([]);
         setUser(null);
+        setSalesAgents([]);
         setLoading(false);
       }
     });
@@ -486,6 +490,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         setConfirm,
         loading,
         user,
+        salesAgents,
         stats,
       }}
     >
