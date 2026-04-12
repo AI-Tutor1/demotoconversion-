@@ -82,7 +82,7 @@ export default function TeachersPage() {
                     <BarChart data={drillData.demos.map((d) => ({ name: d.date, rating: d.analystRating, student: d.student }))} barSize={16}>
                       <XAxis dataKey="name" tick={{ fontSize: 10, fill: MUTED }} axisLine={false} tickLine={false} />
                       <YAxis domain={[0, 5]} tick={{ fontSize: 10, fill: MUTED }} axisLine={false} tickLine={false} />
-                      <Tooltip contentStyle={{ borderRadius: 10, border: "1px solid #e8e8ed", fontSize: 12 }} formatter={(v: number, _: string, p: { payload: { student: string } }) => [v + "/5", p.payload.student]} />
+                      <Tooltip contentStyle={{ borderRadius: 10, border: "1px solid #e8e8ed", fontSize: 12 }} formatter={(v: number, _: string, p: { payload?: { student: string } }) => [v + "/5", p.payload?.student ?? ""]} />
                       <Bar dataKey="rating" fill={BLUE} radius={[4, 4, 0, 0]} />
                     </BarChart>
                   </ResponsiveContainer>
