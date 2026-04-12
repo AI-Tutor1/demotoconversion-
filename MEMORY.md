@@ -268,3 +268,117 @@ When `marketing: true`, additional marketing comments should be collected. The U
 - **Phase 2:** Supabase database + auth + realtime
 - **Phase 3:** Python AI backend with 7 agents (LangGraph + Celery + Redis)
 - **Phase 4:** Predictive ML, pgvector semantic search, agent config panel
+
+---
+
+## Part 9: Security Decisions (was SECURITY.md)
+
+### Authentication Flow (Phase 2 — implemented)
+
+```
+User opens app → Middleware checks session →
+  If valid session → Render page (role from users table)
+  If no session → Redirect to /login
+```
+
+Middleware at the project root uses `@supabase/ssr`'s `createServerClient` with `NextRequest`/`NextResponse` cookie adapters. Calls `auth.getUser()` (not `getSession`) to validate the JWT with Supabase Auth on every request. See `middleware.ts`.
+
+### Role-Based Route Protection Matrix
+
+| Route | analyst | sales_agent | manager |
+|-------|---------|-------------|---------|
+| `/` | Read own stats | Read own stats | Read all stats |
+| `/analyst` | Full access | No access | Full access |
+| `/sales` | No access | Full access | Full access |
+| `/kanban` | Own columns | Own columns | All columns |
+| `/analytics` | View only | View only | Full access |
+| `/teachers` | View only | View only | Full access |
+| `/admin/*` | No access | No access | Full access |
+
+Violations redirect to `/?denied=<prefix>`. The store reads the query param on mount, flashes a toast, and cleans the URL via `history.replaceState`.
+
+### RLS Policy Design (as implemented)
+
+Core principle: every read and write is governed by RLS. Service-role key only used by Python backend in Phase 3 (bypasses RLS for AI writes).
+
+**Key policy pattern:** role checks use a `SECURITY DEFINER` helper `public.current_user_role()` that reads from `users` bypassing RLS. This prevents the infinite-recursion bug (Postgres 42P17) that crashed sign-in briefly during Phase 2 rollout — see BUG-009 below.
+
+#### Active policies (summary — exact DDL in `supabase/migrations/`)
+
+**users:**
+- Read all profiles (all authenticated)
+- Managers manage users (FOR ALL, `current_user_role() = 'manager'`)
+- Update own profile (`id = auth.uid()`)
+
+**demos:**
+- Analysts read own + unassigned pool (role-scoped so sales agents cannot see unassigned)
+- Sales agents read demos where `sales_agent_id = auth.uid()` (tight, no blanket analyst pass)
+- Analysts update own reviews (`analyst_id = auth.uid()`)
+- Claim unassigned demo (atomic `analyst_id IS NULL` WITH CHECK `= auth.uid()` + role=analyst)
+- Sales update own demos
+- Analysts create demos (INSERT — either role)
+- Managers full access (FOR ALL)
+
+**pour_issues:**
+- Read if parent demo is visible (cascades demos RLS via EXISTS)
+- Analysts IUD POUR for own demos
+- Managers manage all
+
+**demo_drafts / agent_configs / task_queue (Phase 3 tables):**
+- Analyst reads own drafts + manager reads all
+- Managers manage configs
+- Managers read task queue
+
+### Env Var Security
+
+| Variable | Public? | Where used |
+|----------|---------|-----------|
+| `NEXT_PUBLIC_SUPABASE_URL` | Yes | Browser client |
+| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Yes | Browser client (RLS protects data, not the key) |
+| `SUPABASE_SERVICE_ROLE_KEY` | **NO** | Server Actions / Python backend only (bypasses RLS) |
+| `ANTHROPIC_API_KEY` | **NO** | Python backend only (Phase 3) |
+
+Rules:
+1. NEVER commit `.env.local` — it's gitignored
+2. `.env.example` holds variable names with placeholders
+3. `NEXT_PUBLIC_` prefix = exposed to browser; reserved for non-secret values
+4. Server-only secrets must NEVER have `NEXT_PUBLIC_` prefix
+
+### PII Handling
+
+| Data | Class | Handling |
+|------|-------|---------|
+| Student names | PII | Display only; no bulk export without manager approval |
+| Parent phone numbers | PII | Visible only to assigned sales agent |
+| Teacher names | Business data | Visible to all authenticated users |
+| Student verbatim feedback | PII | Visible to assigned analyst + sales agent |
+| Demo recordings | PII | Stored in Supabase Storage behind access policies |
+
+Retention: active demos indefinitely; archived (>12mo) to cold storage; user accounts soft-deleted (`is_active=false`); AI drafts retained 6 months; task_queue logs purged after 3 months.
+
+---
+
+## Part 10: Phase 2 Bugs — Added During Deployment
+
+These were not in the original V4 / Phase 1 history. They surfaced during Supabase integration (April 2026).
+
+### BUG-009: Raw-SQL Auth User Seeding — Null Token Columns
+- **Severity:** Fatal — sign-in fails for all seeded users
+- **Symptom:** "Database error querying schema" on every attempted login
+- **Root cause:** GoTrue (Supabase Auth) requires `confirmation_token`, `recovery_token`, `email_change_token_new`, `email_change` to be `''` (empty string), not NULL. Raw SQL INSERTs into `auth.users` that omit these columns leave them NULL, which breaks token verification.
+- **Fix:** Always include those 4 columns with `''` when seeding via SQL. See `20260412112906_seed_initial_users.sql` (fixed) and `20260412112908_fix_auth_user_null_tokens.sql` (hotfix for already-seeded rows).
+- **GUARDRAIL:** Never seed `auth.users` via raw SQL without explicitly setting all token columns to `''`. Prefer `supabase.auth.admin.createUser()` when possible.
+
+### BUG-010: Users RLS Infinite Recursion (42P17)
+- **Severity:** Fatal — every authenticated read of `users` fails
+- **Symptom:** Middleware profile lookup returns null → all routes denied; store `syncUserProfile` fails → no user badge; "Managers full access demos" EXISTS subquery fails → manager sees 0 demos.
+- **Root cause:** `"Managers manage users"` FOR ALL policy on `users` table had `USING (EXISTS (SELECT 1 FROM users WHERE id = auth.uid() AND role = 'manager'))` — reading users to decide a policy on users causes Postgres to evaluate policy → query → evaluate policy → infinite loop.
+- **Fix:** Introduce `public.current_user_role() RETURNS text LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, pg_temp`. The SECURITY DEFINER function runs as postgres (which has BYPASSRLS), so its inner query doesn't trigger policies. Rewrite every policy that used `EXISTS (… users … role=X)` to `public.current_user_role() = 'X'`. See migration `20260413000000_fix_users_rls_recursion.sql`.
+- **GUARDRAIL:** Never write a policy on table X whose USING/WITH CHECK queries table X. Use a SECURITY DEFINER helper for role lookups. Grant EXECUTE only to `authenticated, service_role` and REVOKE from PUBLIC.
+
+### BUG-011: Analysts Read Policy Leaked Unassigned Pool to Sales
+- **Severity:** Medium — RLS-level role isolation violation
+- **Symptom:** Sales agent dashboard showed 12 demos instead of 0.
+- **Root cause:** `"Analysts read own and unassigned demos"` SELECT policy had `USING (analyst_id = auth.uid() OR analyst_id IS NULL OR role='manager')` with no role restriction on the `analyst_id IS NULL` branch. Since all seed demos had `analyst_id = NULL`, any authenticated user (including sales agents) matched this branch.
+- **Fix:** Add role gate: USING now requires `current_user_role() = 'analyst'` for the own-and-unassigned branch. Managers remain covered by their separate FOR ALL policy. See `20260413000001_scope_analyst_read_to_analyst_role.sql`.
+- **GUARDRAIL:** When copying policies verbatim from docs, trace each branch against every role — not just the role named in the policy title. An "analyst" policy that doesn't assert role='analyst' applies to everyone authenticated.
