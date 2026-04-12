@@ -382,3 +382,17 @@ These were not in the original V4 / Phase 1 history. They surfaced during Supaba
 - **Root cause:** `"Analysts read own and unassigned demos"` SELECT policy had `USING (analyst_id = auth.uid() OR analyst_id IS NULL OR role='manager')` with no role restriction on the `analyst_id IS NULL` branch. Since all seed demos had `analyst_id = NULL`, any authenticated user (including sales agents) matched this branch.
 - **Fix:** Add role gate: USING now requires `current_user_role() = 'analyst'` for the own-and-unassigned branch. Managers remain covered by their separate FOR ALL policy. See `20260413000001_scope_analyst_read_to_analyst_role.sql`.
 - **GUARDRAIL:** When copying policies verbatim from docs, trace each branch against every role — not just the role named in the policy title. An "analyst" policy that doesn't assert role='analyst' applies to everyone authenticated.
+
+### BUG-012: Next.js .next Cache Corruption (Recurring)
+- **Severity:** High — entire UI renders unstyled or with 500 errors
+- **Symptom:** Nav bar loses all CSS, pages show raw HTML or MODULE_NOT_FOUND errors, Kanban/Analytics show 0 data
+- **Root cause:** Running `npm run build` while `npm run dev` is active corrupts webpack chunk IDs in `.next/server/`. The dev server holds references to old chunk hashes that no longer exist.
+- **Fix:** `pkill -f 'next' && rm -rf .next && npm run dev`
+- **GUARDRAIL:** NEVER run `npm run build` while `npm run dev` is running. Stop the dev server first, run build, then restart dev. Use this safe sequence:
+  ```bash
+  # SAFE build check:
+  pkill -f 'next' 2>/dev/null; sleep 1
+  npm run build
+  npm run dev  # restart after build
+  ```
+- **Occurrences:** Step 6 verification (twice), post-cleanup commit (62c3e05)

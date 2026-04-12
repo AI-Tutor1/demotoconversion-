@@ -396,6 +396,7 @@ done
 - Do NOT modify `lib/store.tsx` without listing every consumer first
 - Do NOT add a second accent color — Apple Blue is the only one
 - Do NOT add gradients or decorative shadows — the design is intentionally flat
+- Do NOT run `npm run build` while `npm run dev` is running — causes `.next` cache corruption (see MEMORY.md BUG-012). Stop dev first, build, then restart dev.
 
 ## When In Doubt
 
