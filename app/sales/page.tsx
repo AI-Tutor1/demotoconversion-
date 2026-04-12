@@ -122,6 +122,14 @@ export default function SalesPage() {
               </div>
               <div style={{background:LIGHT_GRAY,borderRadius:12,padding:"14px 18px",marginBottom:20}}>
                 <div className="section-label" style={{marginBottom:6}}>Analyst review</div>
+                {sel.recording && (
+                  <p style={{fontSize:12,marginBottom:8}}>
+                    <span style={{color:MUTED,marginRight:6}}>Recording:</span>
+                    <a href={sel.recording} target="_blank" rel="noopener noreferrer" style={{color:BLUE,textDecoration:"none",fontWeight:500}}>
+                      Open ↗
+                    </a>
+                  </p>
+                )}
                 <p style={{fontSize:13,lineHeight:1.47}}>{sel.review||"No review."}</p>
                 {sel.pour.length>0&&<div style={{marginTop:8}}>{sel.pour.map(pp => <div key={pp.cat} style={{marginBottom:4}}><span className="pour-tag">{pp.cat}</span>{pp.desc&&<span style={{fontSize:12,color:MUTED,marginLeft:6}}>{pp.desc}</span>}</div>)}</div>}
                 <div style={{display:"flex",gap:16,marginTop:10}}><span style={{fontSize:12,color:MUTED}}>Student: <strong>{Math.round(sel.studentRaw/2)}/5</strong></span><span style={{fontSize:12,color:MUTED}}>Analyst: <strong>{sel.analystRating}/5</strong></span></div>

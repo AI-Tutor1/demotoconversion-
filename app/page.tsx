@@ -7,7 +7,14 @@ import { NEAR_BLACK, LIGHT_GRAY, MUTED, BLUE } from "@/lib/types";
 import Link from "next/link";
 
 export default function DashboardPage() {
-  const { stats, rangedDemos, activity, dateRange } = useStore();
+  const { stats, rangedDemos, activity, dateRange, user } = useStore();
+
+  const emptyMessage =
+    user?.role === "sales_agent"
+      ? "No demos assigned to you yet. Demos will appear here once an analyst submits a review and it's routed to you."
+      : user?.role === "analyst"
+      ? "No demos in your queue. Claim a demo from the unassigned pool or wait for auto-assignment."
+      : "No demos match the current filter.";
 
   return (
     <>
@@ -55,6 +62,11 @@ export default function DashboardPage() {
         <div style={{ maxWidth: 1100, margin: "0 auto", display: "grid", gridTemplateColumns: "minmax(0,1fr) minmax(0,300px)", gap: 24 }}>
           <div>
             <h2 style={{ fontSize: 24, fontWeight: 600, marginBottom: 16 }}>Recent demos</h2>
+            {rangedDemos.length === 0 && (
+              <div style={{ padding: "32px 20px", textAlign: "center", background: LIGHT_GRAY, borderRadius: 12, color: MUTED, fontSize: 13, lineHeight: 1.47 }}>
+                {emptyMessage}
+              </div>
+            )}
             {rangedDemos.slice(0, 6).map((d) => (
               <div key={d.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 0", borderBottom: "1px solid #f0f0f0", gap: 8, flexWrap: "wrap" }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 10 }}>

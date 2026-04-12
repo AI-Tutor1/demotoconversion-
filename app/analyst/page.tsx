@@ -8,9 +8,10 @@ import { formatMonth } from "@/lib/utils";
 
 export default function AnalystPage() {
   const { setDemos, flash, logActivity } = useStore();
-  const blank = { date: new Date().toISOString().split("T")[0], teacher: "", student: "", level: "", subject: "", pour: {} as Record<string, string>, methodology: "", suggestions: "", improvement: "", studentRaw: 7, analystRating: 0 };
+  const blank = { date: new Date().toISOString().split("T")[0], teacher: "", student: "", level: "", subject: "", pour: {} as Record<string, string>, methodology: "", suggestions: "", improvement: "", recording: "", studentRaw: 7, analystRating: 0 };
   const [f, setF] = useState(blank);
   const [errors, setErrors] = useState<Record<string, string>>({});
+  const [submitting, setSubmitting] = useState(false);
 
   const u = (k: string, v: unknown) => {
     setF((p) => ({ ...p, [k]: v }));
@@ -38,20 +39,26 @@ export default function AnalystPage() {
   };
 
   const submit = () => {
+    if (submitting) return;
     if (!validate()) { flash("Please fix errors above"); return; }
+    setSubmitting(true);
     const t = TEACHERS.find((x) => x.name === f.teacher);
     const pourArr = Object.entries(f.pour).map(([cat, desc]) => ({ cat, desc }));
+    const student = f.student;
     setDemos((p) => [{
       id: Date.now(), date: f.date, teacher: f.teacher, tid: t ? t.uid : 0,
-      student: f.student, level: f.level, subject: f.subject, pour: pourArr,
+      student, level: f.level, subject: f.subject, pour: pourArr,
       review: f.methodology, studentRaw: f.studentRaw, analystRating: f.analystRating,
       status: "Pending" as const, suggestions: f.suggestions, improvement: f.improvement,
-      agent: "", comments: "", verbatim: "", acctType: "", link: "", marketing: false, ts: Date.now(),
+      agent: "", comments: "", verbatim: "", acctType: "", link: "",
+      recording: f.recording, marketing: false, ts: Date.now(),
+      workflowStage: "pending_sales",
     }, ...p]);
-    logActivity("submitted", "Analyst", f.student + " demo");
+    logActivity("submitted", "Analyst", student + " demo");
     flash("Demo submitted to sales queue");
     setF(blank);
     setErrors({});
+    setTimeout(() => setSubmitting(false), 1000);
   };
 
   const derivedMonth = f.date ? formatMonth(f.date) : "";
@@ -86,6 +93,9 @@ export default function AnalystPage() {
                 </select>
               </Field>
             </div>
+            <Field label="Recording URL">
+              <input type="url" className="apple-input" placeholder="https://zoom.us/rec/..." value={f.recording} onChange={(e) => u("recording", e.target.value)} />
+            </Field>
             <Field label="Student name *" error={errors.student}>
               <input className={"apple-input" + (errors.student ? " error" : "")} placeholder="Full name" value={f.student} onChange={(e) => u("student", e.target.value)} />
             </Field>
@@ -146,9 +156,14 @@ export default function AnalystPage() {
           </SectionHeader>
 
           <div style={{ display: "flex", justifyContent: "flex-end", gap: 12 }}>
-            <button className="pill pill-outline" onClick={() => { setF(blank); setErrors({}); }}>Reset</button>
-            <button className="pill pill-blue" style={{ padding: "12px 32px", fontSize: 17 }} onClick={submit}>
-              Submit to sales queue
+            <button className="pill pill-outline" onClick={() => { setF(blank); setErrors({}); }} disabled={submitting}>Reset</button>
+            <button
+              className="pill pill-blue"
+              style={{ padding: "12px 32px", fontSize: 17, opacity: submitting ? 0.6 : 1, cursor: submitting ? "default" : "pointer" }}
+              onClick={submit}
+              disabled={submitting}
+            >
+              {submitting ? "Submitting…" : "Submit to sales queue"}
             </button>
           </div>
         </div>

@@ -1,4 +1,4 @@
-import type { Demo, PourIssue } from "./types";
+import type { Demo, PourIssue, WorkflowStage } from "./types";
 
 // ─── DB row shapes ───────────────────────────────────────────
 
@@ -24,6 +24,7 @@ export type DemoRow = {
   verbatim: string;
   acct_type: string;
   link: string;
+  recording: string;
   marketing: boolean;
   ts: number;
   analyst_id: string | null;
@@ -75,8 +76,10 @@ export function dbRowToDemo(row: DemoRow): Demo {
     verbatim: row.verbatim,
     acctType: row.acct_type,
     link: row.link,
+    recording: row.recording ?? "",
     marketing: row.marketing,
     ts: Number(row.ts),
+    workflowStage: (row.workflow_stage as WorkflowStage) ?? "new",
   };
 }
 
@@ -110,9 +113,10 @@ export function demoToInsertRow(d: Demo): Record<string, unknown> {
     verbatim: d.verbatim,
     acct_type: d.acctType,
     link: d.link,
+    recording: d.recording ?? "",
     marketing: d.marketing,
     ts: d.ts,
-    workflow_stage: statusToStage(d.status),
+    workflow_stage: d.workflowStage ?? statusToStage(d.status),
   };
 }
 
@@ -131,10 +135,14 @@ export function demoUpdatesToDb(partial: Partial<Demo>): Record<string, unknown>
   if ("engagement" in partial) out.engagement = partial.engagement ?? null;
   if ("studentRaw" in partial) out.student_raw = partial.studentRaw;
   if ("analystRating" in partial) out.analyst_rating = partial.analystRating;
+  // workflowStage explicit update takes precedence over status-derived value
+  const hasExplicitStage =
+    "workflowStage" in partial && partial.workflowStage !== undefined;
   if ("status" in partial && partial.status !== undefined) {
     out.status = partial.status;
-    out.workflow_stage = statusToStage(partial.status);
+    if (!hasExplicitStage) out.workflow_stage = statusToStage(partial.status);
   }
+  if (hasExplicitStage) out.workflow_stage = partial.workflowStage;
   if ("suggestions" in partial) out.suggestions = partial.suggestions;
   if ("improvement" in partial) out.improvement = partial.improvement ?? null;
   if ("agent" in partial) out.agent = partial.agent;
@@ -142,6 +150,7 @@ export function demoUpdatesToDb(partial: Partial<Demo>): Record<string, unknown>
   if ("verbatim" in partial) out.verbatim = partial.verbatim;
   if ("acctType" in partial) out.acct_type = partial.acctType;
   if ("link" in partial) out.link = partial.link;
+  if ("recording" in partial) out.recording = partial.recording ?? "";
   if ("marketing" in partial) out.marketing = partial.marketing;
   if ("ts" in partial) out.ts = partial.ts;
   return out;

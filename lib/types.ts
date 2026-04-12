@@ -11,6 +11,15 @@ export interface PourIssue {
   desc: string;
 }
 
+export type WorkflowStage =
+  | "new"
+  | "assigned"
+  | "under_review"
+  | "pending_sales"
+  | "contacted"
+  | "converted"
+  | "lost";
+
 export interface Demo {
   id: number;
   date: string;
@@ -33,8 +42,10 @@ export interface Demo {
   verbatim: string;
   acctType: string;
   link: string;
+  recording: string;
   marketing: boolean;
   ts: number;
+  workflowStage: WorkflowStage;
 }
 
 export interface ActivityEntry {

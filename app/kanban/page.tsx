@@ -2,16 +2,27 @@
 import { useState, useMemo } from "react";
 import { useStore } from "@/lib/store";
 import { Stars, EmptyState } from "@/components/ui";
-import { LIGHT_GRAY, MUTED, BLUE } from "@/lib/types";
+import { LIGHT_GRAY, MUTED, BLUE, type WorkflowStage } from "@/lib/types";
 import { ageDays, ageColor, ageTextColor } from "@/lib/utils";
 
-const KCOLS = [
-  { key: "new", label: "New", color: "#0071e3" },
-  { key: "review", label: "Under review", color: "#AF52DE" },
-  { key: "pending", label: "Pending sales", color: "#FF9F0A" },
-  { key: "converted", label: "Converted", color: "#30D158" },
-  { key: "lost", label: "Not converted", color: "#E24B4A" },
+const KCOLS: { key: string; label: string; color: string; stage: WorkflowStage; status: "Pending" | "Converted" | "Not Converted" }[] = [
+  { key: "new",       label: "New",           color: "#0071e3", stage: "new",           status: "Pending" },
+  { key: "review",    label: "Under review",  color: "#AF52DE", stage: "under_review",  status: "Pending" },
+  { key: "pending",   label: "Pending sales", color: "#FF9F0A", stage: "pending_sales", status: "Pending" },
+  { key: "converted", label: "Converted",     color: "#30D158", stage: "converted",     status: "Converted" },
+  { key: "lost",      label: "Not converted", color: "#E24B4A", stage: "lost",          status: "Not Converted" },
 ];
+
+// Reverse lookup: workflowStage → kanban column key
+const STAGE_TO_COL: Record<WorkflowStage, string> = {
+  new: "new",
+  assigned: "review",
+  under_review: "review",
+  pending_sales: "pending",
+  contacted: "pending",
+  converted: "converted",
+  lost: "lost",
+};
 
 export default function KanbanPage() {
   const { rangedDemos, setDemos, flash, setConfirm, logActivity } = useStore();
@@ -22,27 +33,27 @@ export default function KanbanPage() {
     const b: Record<string, typeof rangedDemos> = { new: [], review: [], pending: [], converted: [], lost: [] };
     rangedDemos.forEach((d) => {
       const card = { ...d, age: ageDays(d.ts) } as typeof d & { age: number };
-      if (d.status === "Converted") b.converted.push(card);
-      else if (d.status === "Not Converted") b.lost.push(card);
-      else if (d.analystRating > 0 && d.review) b.pending.push(card);
-      else b.new.push(card);
+      const col = STAGE_TO_COL[d.workflowStage] ?? "new";
+      b[col].push(card);
     });
     return b;
   }, [rangedDemos]);
 
   const onDrop = (toCol: string) => {
     if (!dragging) { setDragOver(null); return; }
-    const statusMap: Record<string, string> = { converted: "Converted", lost: "Not Converted", new: "Pending", review: "Pending", pending: "Pending" };
-    const newStatus = statusMap[toCol] || "Pending";
-    if (newStatus !== dragging.card.status) {
+    const target = KCOLS.find((c) => c.key === toCol);
+    if (!target) { setDragging(null); setDragOver(null); return; }
+    const newStatus = target.status;
+    const newStage = target.stage;
+    if (newStage !== dragging.card.workflowStage) {
       if (toCol === "converted" || toCol === "lost") {
         setConfirm({ title: "Move to " + (toCol === "converted" ? "Converted" : "Not Converted") + "?", msg: dragging.card.student + " status will change.", onConfirm: () => {
-          setDemos((p) => p.map((d) => d.id === dragging.card.id ? { ...d, status: newStatus as "Converted" | "Not Converted" | "Pending" } : d));
+          setDemos((p) => p.map((d) => d.id === dragging.card.id ? { ...d, status: newStatus, workflowStage: newStage } : d));
           logActivity(toCol === "converted" ? "converted" : "not converted", "Kanban", dragging.card.student);
           flash(dragging.card.student + " moved");
         }});
       } else {
-        setDemos((p) => p.map((d) => d.id === dragging.card.id ? { ...d, status: newStatus as "Pending" } : d));
+        setDemos((p) => p.map((d) => d.id === dragging.card.id ? { ...d, status: newStatus, workflowStage: newStage } : d));
       }
     }
     setDragging(null); setDragOver(null);

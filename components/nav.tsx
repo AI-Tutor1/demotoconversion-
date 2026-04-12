@@ -8,13 +8,13 @@ import { supabase } from "@/lib/supabase";
 import { MUTED } from "@/lib/types";
 import { exportCSV } from "@/lib/utils";
 
-const NAV_ITEMS = [
+const NAV_ITEMS: { label: string; href: string; roles?: ("analyst" | "sales_agent" | "manager")[] }[] = [
   { label: "Dashboard", href: "/" },
-  { label: "Analyst", href: "/analyst" },
-  { label: "Sales", href: "/sales" },
-  { label: "Kanban", href: "/kanban" },
+  { label: "Analyst",   href: "/analyst",   roles: ["analyst", "manager"] },
+  { label: "Sales",     href: "/sales",     roles: ["sales_agent", "manager"] },
+  { label: "Kanban",    href: "/kanban" },
   { label: "Analytics", href: "/analytics" },
-  { label: "Teachers", href: "/teachers" },
+  { label: "Teachers",  href: "/teachers" },
 ];
 
 export default function Nav() {
@@ -92,9 +92,11 @@ export default function Nav() {
             <path d="M15.5 17.4c-.8 1.2-1.7 2.4-3 2.4-1.3 0-1.7-.8-3.2-.8s-2 .8-3.2.8c-1.3 0-2.3-1.3-3.1-2.5C1.2 14.6.2 11 1.5 8.6c.9-1.6 2.4-2.7 4-2.7 1.3 0 2.3.9 3.1.9.8 0 2-.9 3.4-.8.6 0 2.2.2 3.2 1.7-2.8 1.7-2.3 5.9.3 7.1zM12 3.6c.7-.9 1.2-2.1 1.1-3.3-1.1.1-2.3.7-3.1 1.6-.7.8-1.3 2-1.1 3.2 1.2.1 2.3-.6 3.1-1.5z" />
           </svg>
 
-          {/* Nav links */}
+          {/* Nav links (filtered to current user's role) */}
           <div style={{ display: "flex", alignItems: "center", flex: 1, overflow: "auto" }}>
-            {NAV_ITEMS.map((item) => (
+            {NAV_ITEMS.filter(
+              (item) => !item.roles || (user && item.roles.includes(user.role))
+            ).map((item) => (
               <Link
                 key={item.href}
                 href={item.href}
