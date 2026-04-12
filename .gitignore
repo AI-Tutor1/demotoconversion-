@@ -39,3 +39,11 @@ next-env.d.ts
 
 # Claude Code internal state
 .claude/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+backend/.env
+*.egg-info/

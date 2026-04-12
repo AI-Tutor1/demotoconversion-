@@ -397,6 +397,8 @@ done
 - Do NOT add a second accent color — Apple Blue is the only one
 - Do NOT add gradients or decorative shadows — the design is intentionally flat
 - Do NOT run `npm run build` while `npm run dev` is running — causes `.next` cache corruption (see MEMORY.md BUG-012). Stop dev first, build, then restart dev.
+- Do NOT create additional root-level directories for services — only `backend/` and `supabase/` exist alongside the Next.js app
+- Do NOT import from `backend/` in frontend code or vice versa — they communicate via HTTP only
 
 ## When In Doubt
 

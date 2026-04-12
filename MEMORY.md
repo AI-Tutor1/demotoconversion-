@@ -437,3 +437,25 @@ These were not in the original V4 / Phase 1 history. They surfaced during Supaba
 - agent_configs table exists (empty, waiting for prompt configuration)
 - task_queue table exists (empty, waiting for Celery task tracking)
 - PROMPTS section in CONTEXT.md has production-ready system prompts for all 7 agents
+
+---
+
+## Part 12: Phase 3 Decisions (April 2026)
+
+Captured at Phase 3 kickoff so these don't need to be re-derived. All decisions approved by the user upfront.
+
+1. **Monorepo** — the Python AI backend lives in `backend/` inside this repo, alongside `app/`, `supabase/`, etc. Frontend and backend communicate via HTTP only (no shared imports).
+2. **Hosting (future)** — Railway for the Python service when we deploy. Locally: frontend on :3000, backend on :8000. No deployment in Phase 3.
+3. **LLM provider** — Anthropic Claude via `langchain-anthropic`. Model: `claude-sonnet-4-20250514` for analysis agents; `claude-haiku-*` reserved for routing/classifier (later). Temperature 0.3 for Demo Analyst.
+4. **First agent** — Demo Analyst (not Ingest). Demo Analyst is the human-in-the-loop UX the whole Phase 3 vision hinges on, and it has a clean interface (demo.transcript → demo_drafts row). Whisper transcription deferred; for Phase 3 we paste transcripts into `demos.transcript` manually.
+5. **Supabase access from backend** — `SUPABASE_SERVICE_ROLE_KEY` (bypasses RLS). Lives only in `backend/.env`. Never touches the frontend bundle. Not exposed via the Supabase MCP I have access to — user retrieves from dashboard manually.
+6. **Secrets handling** — `ANTHROPIC_API_KEY` and `SUPABASE_SERVICE_ROLE_KEY` both live in `backend/.env` (gitignored via root `.gitignore`). `backend/.env.example` lists placeholders. User pastes real values manually.
+7. **Tech pins** — fastapi 0.115.0, langgraph 0.2.0, langchain-anthropic 0.3.0, supabase-py 2.10.0, anthropic 0.40.0. Version conflicts (if any) surface at `pip install` and get resolved then.
+
+### Phase 3 step breakdown (6 steps)
+- Step 1 — backend scaffolding (this session)
+- Step 2 — Demo Analyst LangGraph node + JSON parsing + retry
+- Step 3 — wire `/api/v1/demos/{id}/analyze` to the agent
+- Step 4 — seed a transcript into `demos.transcript` for testing
+- Step 5 — frontend split-view draft-review UI + Realtime subscribe to `demo_drafts`
+- Step 6 — full-loop test (transcript → agent → draft → review → approve)
