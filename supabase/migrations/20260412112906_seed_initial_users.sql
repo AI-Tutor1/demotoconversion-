@@ -17,27 +17,34 @@ DECLARE
   v_password   TEXT := 'ChangeMe123!';
 BEGIN
   -- ─── auth.users ────────────────────────────────────────────
+  -- NOTE: confirmation_token / recovery_token / email_change / email_change_token_new
+  -- must be '' (not NULL) — GoTrue aggregates them during sign-in and raw-SQL
+  -- INSERTs that leave them NULL cause "Database error querying schema" on login.
   INSERT INTO auth.users (
     instance_id, id, aud, role,
     email, encrypted_password, email_confirmed_at,
     raw_app_meta_data, raw_user_meta_data,
-    created_at, updated_at, is_sso_user
+    created_at, updated_at, is_sso_user,
+    confirmation_token, recovery_token, email_change_token_new, email_change
   ) VALUES
     ('00000000-0000-0000-0000-000000000000', v_manager_id, 'authenticated', 'authenticated',
      'manager@demo.pk', crypt(v_password, gen_salt('bf')), NOW(),
      '{"provider":"email","providers":["email"]}'::jsonb,
      '{"full_name":"Manager User"}'::jsonb,
-     NOW(), NOW(), FALSE),
+     NOW(), NOW(), FALSE,
+     '', '', '', ''),
     ('00000000-0000-0000-0000-000000000000', v_analyst_id, 'authenticated', 'authenticated',
      'analyst@demo.pk', crypt(v_password, gen_salt('bf')), NOW(),
      '{"provider":"email","providers":["email"]}'::jsonb,
      '{"full_name":"Analyst User"}'::jsonb,
-     NOW(), NOW(), FALSE),
+     NOW(), NOW(), FALSE,
+     '', '', '', ''),
     ('00000000-0000-0000-0000-000000000000', v_sales_id, 'authenticated', 'authenticated',
      'sales@demo.pk',   crypt(v_password, gen_salt('bf')), NOW(),
      '{"provider":"email","providers":["email"]}'::jsonb,
      '{"full_name":"Sales User"}'::jsonb,
-     NOW(), NOW(), FALSE);
+     NOW(), NOW(), FALSE,
+     '', '', '', '');
 
   -- ─── auth.identities (required for email/password login) ───
   INSERT INTO auth.identities (
