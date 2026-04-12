@@ -1,0 +1,270 @@
+# MEMORY.md — Complete Project History, Decisions & Guardrails
+
+This is the institutional memory of the project. Claude Code MUST consult this file before making any change that touches architecture, data, naming, styling, or state management. Every entry exists because something went wrong or a non-obvious decision was made.
+
+---
+
+## Part 1: Critical Bugs — These WILL Recur Without Guardrails
+
+### BUG-001: The `returnReact` Transpiler Crash
+- **Severity:** Fatal — crashes the entire application
+- **Versions affected:** V3 (74KB compressed JSX)
+- **Symptom:** `returnReact is not defined` error in the artifact renderer
+- **Root cause:** The JSX transpiler concatenates `return` with `(` into a single token when there is no space between them. `return(<div>)` becomes `returnReact.createElement(...)` instead of `return React.createElement(...)`
+- **Where it happened:** Compressed single-line code throughout the 74KB V3 file
+- **Fix applied:** Reformatted entire codebase. Every `return` now has a space before `(`
+- **GUARDRAIL:** After EVERY file edit, run: `grep -n 'return(' FILE.tsx | grep -v 'return ('`. Zero matches = safe.
+- **Why it recurs:** Code formatters, minifiers, and AI-generated code naturally compress `return(`. This is not a standard JavaScript error — it's specific to the artifact transpiler.
+
+### BUG-002: Agent Name "Zain" → "Muhammad"
+- **Severity:** Data integrity — wrong person credited/assigned
+- **When discovered:** After V1 UI was built with "Zain" as the third sales agent
+- **User correction:** "Change the name of third agent is Muhammad"
+- **Fix applied:** Global find-and-replace across all files. `AGENTS` array in `lib/types.ts` updated.
+- **GUARDRAIL:** Never hardcode agent names. Always reference the `AGENTS` array from `lib/types.ts`. After every edit, run: `grep -rn 'Zain' . --include='*.tsx' --include='*.ts'`. Zero matches = safe.
+- **Why it matters:** Agent names appear in seed data, dropdowns, leaderboards, and activity logs. One missed reference means the wrong person appears in the UI.
+
+### BUG-003: Hardcoded Analytics vs. Live Dashboard
+- **Severity:** Critical — two views show contradictory numbers
+- **When discovered:** CTO audit #1 (42 findings)
+- **What happened:** The Analytics page used `const MONTHLY = [{demos: 267, rate: 42, ...}]` while the Dashboard computed stats from the live `demos` state. An executive opening both views would see "267 demos, 42% rate" in Analytics but "12 demos, 25% rate" in Dashboard.
+- **Fix applied:** All chart data now computed from `rangedDemos` via `useMemo`. No static arrays for any chart.
+- **GUARDRAIL:** After every edit to analytics or any chart, run: `grep -rn 'const MONTHLY\|const ACCT_DATA\|const AGENT_DATA' app/ --include='*.tsx'`. Zero matches = safe. Every chart's `data` prop must trace back to a `useMemo` that reads from `rangedDemos` or `demos`.
+
+### BUG-004: Kanban Board State Disconnect
+- **Severity:** High — new demos invisible on Kanban
+- **When discovered:** CTO audit #1
+- **What happened:** Kanban used `const [board, setBoard] = useState(computeBoard(demos))`. The `useState` initializer runs once. When a new demo was added via the Analyst form, `demos` state updated but Kanban's local `board` state never re-computed. The new demo was invisible until page refresh.
+- **Fix applied:** Replaced `useState` with `useMemo`: `const board = useMemo(() => computeBoard(demos), [demos])`. Board now re-derives from demos on every change.
+- **GUARDRAIL:** Never use `useState(computedValue)` where `computedValue` depends on props or external state. If a value is derived from state, use `useMemo`. If you see `useState` initialized from a function that reads `demos` or `rangedDemos`, it's a bug.
+
+### BUG-005: Kanban Categorized by Age Instead of Workflow State
+- **Severity:** High — demos appear in wrong columns
+- **When discovered:** CTO audit #1
+- **What happened:** Cards were sorted into columns using `age <= 1 → "New"`. This meant a fully-reviewed demo submitted today appeared in "New" instead of "Pending Sales."
+- **Correct logic:**
+  - `status === "Converted"` → Converted column
+  - `status === "Not Converted"` → Not Converted column
+  - `status === "Pending"` AND `analystRating > 0` AND `review` exists → Pending Sales
+  - `status === "Pending"` AND has partial data → Under Review
+  - Everything else → New
+- **GUARDRAIL:** See CONTEXT.md "Kanban Board Column Logic" for the exact conditions. Never use timestamp/age for column assignment.
+
+### BUG-006: Search Navigation Shows Empty Queue
+- **Severity:** Medium — user clicks search result, sees nothing
+- **When discovered:** CTO audit #1
+- **What happened:** Clicking a search result called `setView("sales")` which set the status filter to "Pending" by default. If the searched demo was "Converted", it was selected (`setSelDemo(d.id)`) but invisible because the filter excluded it.
+- **Fix applied:** Sales view now defaults to "All" status filter, so any searched demo is always visible.
+- **GUARDRAIL:** When navigating to a filtered view from search, always set the filter to "All" or match the target item's status.
+
+### BUG-007: Notification Dropdown Never Dismissed
+- **Severity:** Medium — UI element stays permanently visible
+- **When discovered:** CTO audit #1
+- **What happened:** The notification dropdown toggled on bell click only. Clicking anywhere else on the page left it floating open.
+- **Fix applied:** Added `useRef` on the dropdown container + `useEffect` with `document.addEventListener("mousedown", handler)` that closes the dropdown when clicking outside.
+- **GUARDRAIL:** Every dropdown, popover, and overlay in this project MUST have an outside-click dismiss handler. Pattern:
+  ```tsx
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const h = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false); };
+    document.addEventListener("mousedown", h);
+    return () => document.removeEventListener("mousedown", h);
+  }, [open]);
+  ```
+
+### BUG-008: ESC Key Did Not Close Search
+- **Severity:** Low — visual "ESC" button existed but keyboard shortcut didn't work
+- **When discovered:** CTO audit #1
+- **Fix applied:** Added `useEffect` with `document.addEventListener("keydown", handler)` checking for `e.key === "Escape"`.
+- **GUARDRAIL:** Every modal/overlay must respond to ESC key. Test both click-dismiss and keyboard-dismiss.
+
+---
+
+## Part 2: Data Decisions — The Source Spreadsheet
+
+### Original Data Source
+- **File:** `My_new_reference_.numbers` (Apple Numbers format, 1MB)
+- **Two sheets:** "Reference" (170 teachers with names and user IDs) and "Demo to Conversion" (990 rows of demo data)
+
+### Name Matching Problem
+- **Challenge:** Teacher names in the demo sheet didn't exactly match the reference sheet. "Shoaib Ahmed Ghani" in demos → "Shoaib Ghani" (ID 62) in reference.
+- **Solution:** Built a manual mapping of 28 name variants:
+  - Shoaib Ahmed Ghani → Shoaib Ghani (62)
+  - Hira Zaffar → Hira Zafar (594)
+  - Fizza → Fiza Imran (543) [partial match]
+  - Rameesha → Rameesha Saleem (599) [partial match]
+  - And 24 more...
+- **Result:** 266 of 274 rows with teacher names matched (97%). 7 teachers had no reference match at all.
+- **GUARDRAIL:** When importing new data, always run fuzzy matching. Never trust exact string comparison for teacher names.
+
+### Seed Data Design
+The 12 seed demos in `lib/data.ts` were intentionally designed to test edge cases:
+
+| Aspect | Distribution | Why |
+|--------|-------------|-----|
+| Status | 6 Pending, 3 Converted, 3 Not Converted | All Kanban columns, all filter states, all analytics segments have data |
+| Ratings | 0 at 1/5, 2 at 2/5, 3 at 3/5, 2 at 4/5, 3 at 5/5 | Tests the accountability auto-suggestion at each threshold |
+| POUR issues | 7 demos with issues, 5 without | Tests POUR charts, tags, and teacher POUR metrics |
+| Dates | Apr 6-12 (recent) + Mar 5-20 (older) | Tests date range filter at 7d, 30d, 90d |
+| Teachers | 8 unique teachers, some with multiple demos | Tests teacher aggregation and drill-down |
+| Agents | Maryam (2), Hoor (2), Muhammad (1), empty (7) | Tests agent leaderboard and assignment |
+| Accountability | 3 "Product" entries, rest empty | Tests accountability pie chart |
+| Marketing | 1 true, rest false | Tests the marketing toggle |
+
+**GUARDRAIL:** If you modify seed data, maintain these distributions. Breaking them will make charts, filters, or Kanban columns appear empty during development.
+
+---
+
+## Part 3: Architecture Decisions — Why We Chose This
+
+### Decision: React Context (not Redux, Zustand, or Jotai)
+- **Scale factor:** 12 demos in dev, ~200 in production, max ~1000
+- **Rationale:** React Context with `useMemo` handles this scale. External state managers add bundle size and complexity for no measurable benefit.
+- **Revisit trigger:** If performance degrades with 500+ demos, or if > 3 developers work simultaneously on state-dependent features, migrate to Zustand (not Redux — too much boilerplate).
+
+### Decision: Inline Styles + CSS Classes (not Tailwind)
+- **Rationale:** The Apple design system has specific tokens (border-radius: 980px for pills, specific hex colors like #0071e3) that don't map to Tailwind's default scale. The prototype was built with inline styles. Converting to Tailwind would risk visual regressions with zero functional benefit.
+- **What was tried:** Tailwind was evaluated and rejected. The team would need a custom `tailwind.config.ts` with non-standard values, defeating the purpose of using a utility framework.
+- **GUARDRAIL:** Never add Tailwind to this project. Never convert inline styles to className-based utilities. The hybrid approach (CSS classes for reusable patterns, inline for layout) is intentional.
+
+### Decision: Single Context Provider (not per-feature stores)
+- **Rationale:** All 6 views share the same `demos` array. The Analyst form pushes to `demos`, Sales reads and updates `demos`, Kanban derives from `demos`, Analytics computes from `demos`, Teachers aggregates `demos`. Splitting into AnalystStore + SalesStore + KanbanStore would require context bridging for every cross-view mutation.
+- **GUARDRAIL:** If a new feature needs state, add it to the existing `StoreProvider` in `lib/store.tsx`. Do not create additional Context providers.
+
+### Decision: "use client" on All Pages
+- **Rationale:** Every page uses interactive state (filters, forms, drag-drop, charts). Server Components would help with data fetching (Phase 2), but currently there's no server data source.
+- **Phase 2 plan:** When Supabase connects, data fetching moves to Server Components. Interactivity stays in Client Components. The page structure will split into `page.tsx` (server, fetches data) and `ClientView.tsx` (client, renders interactive UI).
+
+### Decision: Next.js 15 App Router (not Pages Router)
+- **Rationale:** App Router supports Server Components (Phase 2), nested layouts, and parallel routes. Pages Router is legacy. Every new Next.js project should use App Router.
+- **GUARDRAIL:** Never create files in a `pages/` directory. All routes go in `app/`.
+
+### Decision: Recharts (not Chart.js, D3, or Plotly)
+- **Rationale:** Recharts renders as React components (not canvas). It integrates naturally with React state and `useMemo`. Chart.js uses canvas (conflicts with React rendering). D3 requires DOM manipulation (conflicts with virtual DOM). Plotly is heavy (1.5MB+ bundle).
+- **GUARDRAIL:** All chart components must be imported from `recharts`. Never add Chart.js, D3, or Plotly.
+
+### Decision: Python Backend for AI (Phase 3)
+- **Rationale:** LangGraph, CrewAI, Whisper, sentence-transformers, and the Anthropic SDK are Python-native. The TypeScript AI ecosystem is 2+ years behind Python.
+- **Architecture:** Python handles AI orchestration. Next.js handles human interface. They share Supabase as the data layer. Python does NOT serve HTML. Next.js does NOT do AI reasoning.
+- **GUARDRAIL:** Never add AI/ML libraries to the Next.js project. Never add web framework code to the Python project.
+
+### Decision: No Supabase in Phase 1
+- **Rationale:** The frontend must be validated independently. All data is in-memory seed data. Phase 2 adds Supabase with zero page component changes — only `lib/store.tsx` and a new `lib/supabase.ts` change.
+- **GUARDRAIL:** No page component should ever import Supabase directly. All data access goes through `useStore()`.
+
+### Decision: Apple Design System (from VoltAgent/awesome-design-md)
+- **Source:** `https://github.com/VoltAgent/awesome-design-md/blob/main/design-md/apple/DESIGN.md`
+- **Key tokens applied:** SF Pro system fonts, Apple Blue (#0071e3) as singular accent, glass navigation (backdrop-filter blur), alternating black/light-gray sections, pill CTAs (980px radius), negative letter-spacing
+- **GUARDRAIL:** See DESIGN.md for the complete token reference. Never introduce a second accent color. Never use gradients.
+
+---
+
+## Part 4: CTO Audit History — 42 Findings
+
+Two comprehensive CTO-level audits were performed. All 42 findings were fixed.
+
+### Audit #1: Gap Analysis (16 findings)
+Identified 16 missing features across 5 categories: data visualization (no charts), workflow management (no Kanban), search/filter (incomplete), teacher intelligence (no drill-down), operations (no bulk actions).
+
+### Audit #2: Full Audit (42 findings)
+7 Critical, 14 High, 13 Medium, 8 Low across 7 categories:
+
+**Data Integrity (6):** Hardcoded analytics, Kanban state disconnect, age-based categorization, static activity feed, CSV ignoring filters, search navigation bug.
+
+**Pipeline Coverage (5):** Step 10 accountability missing, POUR descriptions missing, link field missing, month display missing, master data view missing.
+
+**Filter/Sort (9):** No date range filter, no sort controls, dashboard KPIs not filterable, no agent filter, no rating filter, no POUR filter, Kanban has zero filters, Teacher view has no sort, no "clear all" button.
+
+**Analytics (7):** No conversion funnel, no pending aging histogram, no teacher comparison, no student vs analyst rating correlation, no subject demand chart, teacher drill-down uses "D1,D2" labels, charts lack date controls.
+
+**UX (7):** No form validation error states, no confirmation dialogs, notification dropdown doesn't dismiss, no undo for status changes, no select-all checkbox, no empty state illustrations, no loading states.
+
+**Accessibility (4):** Star rating no keyboard support, search no ESC handler, Kanban no ARIA labels, color-only status indicators.
+
+**Responsive (4):** Kanban breaks on mobile, analytics grid breaks below 900px, no pagination for large datasets, dashboard layout breaks on narrow screens.
+
+**All 42 were fixed in V4.** The fixes are embedded in the current codebase.
+
+---
+
+## Part 5: Version History
+
+| Version | File | Lines | What changed |
+|---------|------|-------|-------------|
+| V1 | DemoToConversion.jsx | ~400 | Initial 4-view app (Dashboard, Analyst, Sales, Teachers) |
+| V2 | AnalyticsAndKanban.jsx | ~400 | Added Analytics (6 charts) + Kanban (drag-drop) |
+| V3 | DemoToConversion_V3.jsx | 736 | Merged all + 42 audit fixes. **CRASHED** with `returnReact` bug due to compression |
+| V4 | DemoToConversion_V4.jsx | 1203 | Properly formatted, all fixes confirmed working |
+| Next.js | nextjs-project/ | 1915 | Full conversion to Next.js 15 App Router with modular architecture |
+
+---
+
+## Part 6: Things Tried and Rejected
+
+| What | Why rejected |
+|------|-------------|
+| Tailwind CSS | Apple tokens don't map to default scale; would need custom config defeating purpose |
+| Zustand | Over-engineering for 12-200 demo scale; Context suffices |
+| Separate CSS modules | Apple design system is global; splitting CSS causes duplication |
+| shadcn/ui components | Would override the Apple design system's custom inputs/buttons |
+| React Hook Form | Custom validation is simpler for 5 required fields |
+| date-fns / dayjs | Built-in Date + custom `formatMonth` handles all cases |
+| D3 for charts | DOM manipulation conflicts with React virtual DOM |
+| Chart.js | Canvas rendering doesn't integrate with React state |
+| TypeScript `!` non-null assertion | Strict mode is enabled; always handle null explicitly |
+| Pages Router | Legacy; App Router needed for Phase 2 Server Components |
+| Redux | Too much boilerplate for current scale |
+| Framer Motion | CSS keyframe animations sufficient; FM adds 30KB+ |
+
+---
+
+## Part 7: Non-Obvious Rules
+
+### Teacher User ID Lookup
+The `TEACHERS` array in `lib/types.ts` maps names to UIDs. When the analyst selects a teacher from the dropdown, the UID auto-fills: `const t = TEACHERS.find(x => x.name === f.teacher); tid: t ? t.uid : 0`. Never ask users to type UIDs manually.
+
+### Rating Conversion
+Students rate out of 10. The system displays out of 5: `Math.round(studentRaw / 2)`. This happens in the UI (display) and will happen in the database via trigger (Phase 2). The `analystRating` is natively 1-5.
+
+### Accountability Auto-Suggestion Logic
+When status is "Not Converted":
+- `analystRating <= 2` OR `pour.length > 0` → suggest **Product**
+- `analystRating >= 4` AND `studentRaw >= 7` AND `pour.length === 0` → suggest **Sales**
+- Otherwise → suggest **Consumer**
+
+The suggestion is a hint, not a decision. The sales agent can override it.
+
+### Activity Log is Reactive
+`logActivity(action, user, target)` pushes to the activity feed state. It must be called every time state changes: demo submission, status update, bulk action, Kanban drop. If you add a new mutation, add a `logActivity` call.
+
+### Date Range is Global
+The `dateRange` state in the store filters ALL views simultaneously. `rangedDemos` is the filtered array. Pages should use `rangedDemos`, not `demos`, for display. Only use `demos` for mutations (`setDemos`).
+
+### Confirmation Modals are Mandatory for Destructive Actions
+Every action that changes a demo's status must go through `setConfirm()`:
+- Individual status changes (Sales detail panel)
+- Bulk status changes (Sales bulk bar)
+- Kanban drops to Converted or Not Converted columns
+- Never bypass this. A mis-click on "bulk Not Converted" with 10 selected demos is irreversible.
+
+### The Marketing Toggle is Conditional
+When `marketing: true`, additional marketing comments should be collected. The UI shows the marketing checkbox + conditional textarea. In Phase 2, `marketing: true` demos are routed to a marketing queue for re-engagement.
+
+### Month Auto-Derivation
+`formatMonth("2026-04-12")` returns `"Apr 2026"`. This is displayed as a blue badge below the date picker in the Analyst form. The user never types the month — it derives from the date.
+
+---
+
+## Part 8: Environment & Deployment Context
+
+- **Company location:** Karachi, Pakistan
+- **Time zone:** PKT (UTC+5)
+- **Primary users:** Analysts (2-5), Sales agents (3+: Maryam, Hoor, Muhammad), Managers (1-2)
+- **Scale:** 170 teachers, ~50 demos/week, 15 academic levels, 12 subjects
+- **Infrastructure budget:** $125-365/month (Vercel + Railway + Supabase + Claude API)
+- **Deployment target:** Vercel (frontend), Railway (Python AI backend in Phase 3)
+- **Phase 1:** Frontend only, in-memory data, no auth
+- **Phase 2:** Supabase database + auth + realtime
+- **Phase 3:** Python AI backend with 7 agents (LangGraph + Celery + Redis)
+- **Phase 4:** Predictive ML, pgvector semantic search, agent config panel
