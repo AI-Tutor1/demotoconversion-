@@ -2,8 +2,9 @@
 
 import { useState, useEffect, useRef } from "react";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { useStore } from "@/lib/store";
+import { supabase } from "@/lib/supabase";
 import { MUTED } from "@/lib/types";
 import { exportCSV } from "@/lib/utils";
 
@@ -18,14 +19,17 @@ const NAV_ITEMS = [
 
 export default function Nav() {
   const pathname = usePathname();
-  const { dateRange, setDateRange, notifications, rangedDemos } = useStore();
+  const router = useRouter();
+  const { dateRange, setDateRange, notifications, rangedDemos, user, demos } =
+    useStore();
   const [notifOpen, setNotifOpen] = useState(false);
+  const [userOpen, setUserOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQ, setSearchQ] = useState("");
   const notifRef = useRef<HTMLDivElement>(null);
-  const { demos } = useStore();
+  const userRef = useRef<HTMLDivElement>(null);
 
-  // Outside click dismiss
+  // Outside click dismiss — notifications
   useEffect(() => {
     if (!notifOpen) return;
     const handler = (e: MouseEvent) => {
@@ -37,6 +41,18 @@ export default function Nav() {
     return () => document.removeEventListener("mousedown", handler);
   }, [notifOpen]);
 
+  // Outside click dismiss — user menu
+  useEffect(() => {
+    if (!userOpen) return;
+    const handler = (e: MouseEvent) => {
+      if (userRef.current && !userRef.current.contains(e.target as Node)) {
+        setUserOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [userOpen]);
+
   // ESC key for search
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
@@ -45,6 +61,18 @@ export default function Nav() {
     document.addEventListener("keydown", handler);
     return () => document.removeEventListener("keydown", handler);
   }, [searchOpen]);
+
+  // Hide nav on login route (after all hooks so hook order stays stable)
+  if (pathname === "/login") return null;
+
+  const handleSignOut = async () => {
+    await supabase.auth.signOut();
+    setUserOpen(false);
+    router.push("/login");
+    router.refresh();
+  };
+
+  const initial = user?.full_name?.trim().charAt(0).toUpperCase() || "·";
 
   const searchResults = searchQ.trim()
     ? demos.filter(
@@ -142,6 +170,52 @@ export default function Nav() {
                 <path d="M7.5 2v8M4 7l3.5 3 3.5-3M2 12h11" />
               </svg>
             </button>
+
+            {/* User menu */}
+            {user && (
+              <div ref={userRef} style={{ position: "relative" }}>
+                <button
+                  onClick={() => setUserOpen((p) => !p)}
+                  className="nav-icon-btn"
+                  title={user.email}
+                  style={{ fontSize: 12, fontWeight: 600, color: "rgba(255,255,255,.85)" }}
+                >
+                  {initial}
+                </button>
+                {userOpen && (
+                  <div
+                    className="notif-dropdown animate-slide-in"
+                    style={{ minWidth: 220, right: 0, left: "auto" }}
+                  >
+                    <div style={{ padding: "12px 16px", borderBottom: "1px solid #e8e8ed" }}>
+                      <div style={{ fontSize: 13, fontWeight: 600 }}>{user.full_name}</div>
+                      <div style={{ fontSize: 12, color: MUTED, marginTop: 2 }}>
+                        {user.email}
+                      </div>
+                      <div style={{ fontSize: 11, color: MUTED, marginTop: 4, textTransform: "uppercase", letterSpacing: 0.5, fontWeight: 600 }}>
+                        {user.role.replace("_", " ")}
+                      </div>
+                    </div>
+                    <button
+                      onClick={handleSignOut}
+                      style={{
+                        display: "block",
+                        width: "100%",
+                        textAlign: "left",
+                        padding: "11px 16px",
+                        background: "none",
+                        border: "none",
+                        cursor: "pointer",
+                        fontSize: 13,
+                        color: "#1d1d1f",
+                      }}
+                    >
+                      Sign out
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         </div>
       </nav>

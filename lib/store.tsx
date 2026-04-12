@@ -22,6 +22,13 @@ import {
   type DemoRow,
 } from "./transforms";
 
+export interface UserProfile {
+  id: string;
+  email: string;
+  role: "analyst" | "sales_agent" | "manager";
+  full_name: string;
+}
+
 interface StoreContextType {
   demos: Demo[];
   setDemos: React.Dispatch<React.SetStateAction<Demo[]>>;
@@ -38,6 +45,7 @@ interface StoreContextType {
     c: { title: string; msg: string; onConfirm: () => void } | null
   ) => void;
   loading: boolean;
+  user: UserProfile | null;
   stats: {
     total: number;
     converted: number;
@@ -79,6 +87,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const [toast, setToast] = useState<string | null>(null);
   const [confirm, setConfirm] = useState<StoreContextType["confirm"]>(null);
   const [activity, setActivity] = useState<ActivityEntry[]>(SEED_ACTIVITY);
+  const [user, setUser] = useState<UserProfile | null>(null);
 
   const writeHashes = useRef<Map<string, number>>(new Map());
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -281,19 +290,57 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     setLoading(false);
   }, [flash]);
 
+  const syncUserProfile = useCallback(async () => {
+    const {
+      data: { user: authUser },
+    } = await supabase.auth.getUser();
+    if (!authUser) {
+      setUser(null);
+      return;
+    }
+    const { data, error } = await supabase
+      .from("users")
+      .select("id, email, role, full_name")
+      .eq("id", authUser.id)
+      .single();
+    if (error || !data) {
+      setUser(null);
+      return;
+    }
+    setUser(data as UserProfile);
+  }, []);
+
   useEffect(() => {
-    fetchDemos();
     const { data } = supabase.auth.onAuthStateChange((event) => {
-      if (event === "SIGNED_IN" || event === "TOKEN_REFRESHED") {
+      if (
+        event === "INITIAL_SESSION" ||
+        event === "SIGNED_IN" ||
+        event === "TOKEN_REFRESHED"
+      ) {
         fetchDemos();
+        syncUserProfile();
       } else if (event === "SIGNED_OUT") {
         setDemosRaw([]);
+        setUser(null);
+        setLoading(false);
       }
     });
     return () => {
       data.subscription.unsubscribe();
     };
-  }, [fetchDemos]);
+  }, [fetchDemos, syncUserProfile]);
+
+  // Flash reader for middleware route-denied redirects (?denied=<prefix>)
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    const denied = params.get("denied");
+    if (!denied) return;
+    flash(`Access denied to /${denied} — your role doesn't have permission.`);
+    const url = new URL(window.location.href);
+    url.searchParams.delete("denied");
+    window.history.replaceState({}, "", url.toString());
+  }, [flash]);
 
   // ─── Realtime subscription (bypasses wrapped setDemos) ────────
   useEffect(() => {
@@ -438,6 +485,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         confirm,
         setConfirm,
         loading,
+        user,
         stats,
       }}
     >
