@@ -40,6 +40,11 @@ export default function AnalystPage() {
 
   const submit = () => {
     if (submitting) return;
+    if (!f.analystRating) {
+      setErrors((p) => ({ ...p, analystRating: "Please rate" }));
+      flash("Analyst rating is required.");
+      return;
+    }
     if (!validate()) { flash("Please fix errors above"); return; }
     setSubmitting(true);
     const t = TEACHERS.find((x) => x.name === f.teacher);
@@ -151,7 +156,18 @@ export default function AnalystPage() {
               <input type="range" min="1" max="10" step="1" value={f.studentRaw} onChange={(e) => u("studentRaw", Number(e.target.value))} style={{ width: "100%", accentColor: BLUE }} />
             </Field>
             <Field label="Analyst rating *" error={errors.analystRating}>
-              <Stars value={f.analystRating} onChange={(v) => u("analystRating", v)} />
+              <div
+                style={{
+                  display: "inline-block",
+                  padding: errors.analystRating ? "6px 10px" : undefined,
+                  borderRadius: 10,
+                  border: errors.analystRating ? "1px solid #E24B4A" : "1px solid transparent",
+                  background: errors.analystRating ? "#FFEBEE" : "transparent",
+                  transition: "all 0.15s",
+                }}
+              >
+                <Stars value={f.analystRating} onChange={(v) => u("analystRating", v)} />
+              </div>
             </Field>
           </SectionHeader>
 
@@ -159,9 +175,14 @@ export default function AnalystPage() {
             <button className="pill pill-outline" onClick={() => { setF(blank); setErrors({}); }} disabled={submitting}>Reset</button>
             <button
               className="pill pill-blue"
-              style={{ padding: "12px 32px", fontSize: 17, opacity: submitting ? 0.6 : 1, cursor: submitting ? "default" : "pointer" }}
+              style={{
+                padding: "12px 32px",
+                fontSize: 17,
+                opacity: submitting || f.analystRating === 0 ? 0.5 : 1,
+                cursor: submitting || f.analystRating === 0 ? "not-allowed" : "pointer",
+              }}
               onClick={submit}
-              disabled={submitting}
+              disabled={submitting || f.analystRating === 0}
             >
               {submitting ? "Submitting…" : "Submit to sales queue"}
             </button>
