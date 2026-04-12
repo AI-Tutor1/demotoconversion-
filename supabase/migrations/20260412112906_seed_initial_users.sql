@@ -1,6 +1,9 @@
 -- ============================================================
 -- Seed the 3 initial users (dev/testing accounts)
 -- ============================================================
+-- TODO: PRODUCTION — rotate all dev passwords before launch,
+-- then enable Supabase's HaveIBeenPwned leak-protection advisor.
+-- ------------------------------------------------------------
 -- Default password: ChangeMe123!  (rotate before production)
 -- Creates rows in auth.users + auth.identities + public.users atomically.
 -- UUIDs are generated once and reused across all three tables.
