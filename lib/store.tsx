@@ -92,6 +92,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const [salesAgents, setSalesAgents] = useState<UserProfile[]>([]);
 
   const writeHashes = useRef<Map<string, number>>(new Map());
+  const processedRealtimeIds = useRef<Set<number>>(new Set());
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const flash = useCallback((msg: string) => {
@@ -357,6 +358,16 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           const newId = Number(
             (payload.new as unknown as { id: number }).id
           );
+          // Defense-in-depth dedup: if we've already processed this id
+          // (optimistic insert or a prior realtime echo), drop the event.
+          if (processedRealtimeIds.current.has(newId)) return;
+          processedRealtimeIds.current.add(newId);
+          // GC the set periodically so it doesn't grow unbounded
+          if (processedRealtimeIds.current.size > 500) {
+            processedRealtimeIds.current = new Set(
+              Array.from(processedRealtimeIds.current).slice(-250)
+            );
+          }
           const { data: pours } = await supabase
             .from("pour_issues")
             .select("category, description")

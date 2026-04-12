@@ -50,15 +50,21 @@ export default function AnalystPage() {
     const t = TEACHERS.find((x) => x.name === f.teacher);
     const pourArr = Object.entries(f.pour).map(([cat, desc]) => ({ cat, desc }));
     const student = f.student;
-    setDemos((p) => [{
-      id: Date.now(), date: f.date, teacher: f.teacher, tid: t ? t.uid : 0,
+    // Capture Date.now() ONCE outside the updater so React Strict Mode
+    // double-invocation produces the same Demo (same id) and the store's
+    // shouldFire dedup catches the second INSERT. Calling Date.now()
+    // inside the updater creates two rows with ids off-by-one.
+    const now = Date.now();
+    const newDemo = {
+      id: now, date: f.date, teacher: f.teacher, tid: t ? t.uid : 0,
       student, level: f.level, subject: f.subject, pour: pourArr,
       review: f.methodology, studentRaw: f.studentRaw, analystRating: f.analystRating,
       status: "Pending" as const, suggestions: f.suggestions, improvement: f.improvement,
       agent: "", comments: "", verbatim: "", acctType: "", link: "",
-      recording: f.recording, marketing: false, ts: Date.now(),
-      workflowStage: "pending_sales", salesAgentId: null,
-    }, ...p]);
+      recording: f.recording, marketing: false, ts: now,
+      workflowStage: "pending_sales" as const, salesAgentId: null,
+    };
+    setDemos((p) => [newDemo, ...p]);
     logActivity("submitted", "Analyst", student + " demo");
     flash("Demo submitted to sales queue");
     setF(blank);
