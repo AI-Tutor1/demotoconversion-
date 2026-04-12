@@ -133,7 +133,8 @@ const {
 
 ### Store rules
 - Pages use `rangedDemos` for display, `demos` only for mutations
-- Never import Supabase in page components — all data goes through `useStore()`
+- Never import Supabase in page components for DATA — all data goes through `useStore()`
+- **Exception:** auth operations (`supabase.auth.signInWithPassword`, `supabase.auth.signOut`) are allowed to call `supabase` directly from `app/login/page.tsx` and `components/nav.tsx`. Auth is a session concern, not a data concern; the store's read/write/realtime machinery doesn't apply.
 - Never init `useState` from a computed value depending on `demos` — use `useMemo`
 - Every mutation to `setDemos` should be followed by `logActivity()` for audit
 

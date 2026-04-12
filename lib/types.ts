@@ -98,6 +98,4 @@ export const POUR_CATS = [
   "Resources", "Time", "No Show",
 ];
 
-export const AGENTS = ["Maryam", "Hoor", "Muhammad"];
-
 export const ACCT_TYPES = ["Sales", "Product", "Consumer"];

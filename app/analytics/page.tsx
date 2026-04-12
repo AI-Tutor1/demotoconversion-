@@ -2,7 +2,7 @@
 import { useMemo } from "react";
 import { useStore } from "@/lib/store";
 import { EmptyState } from "@/components/ui";
-import { POUR_CATS, AGENTS, MUTED, BLUE, LIGHT_GRAY, NEAR_BLACK, CARD_DARK } from "@/lib/types";
+import { POUR_CATS, MUTED, BLUE, LIGHT_GRAY, NEAR_BLACK, CARD_DARK } from "@/lib/types";
 import { ageDays, formatMonth } from "@/lib/utils";
 import { BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Area, AreaChart } from "recharts";
 
@@ -36,8 +36,11 @@ export default function AnalyticsPage() {
 
   const agentData = useMemo(() => {
     const m: Record<string, { name: string; handled: number; converted: number }> = {};
-    AGENTS.forEach((a) => { m[a] = { name: a, handled: 0, converted: 0 }; });
-    demos.filter((d) => d.agent).forEach((d) => { if (m[d.agent]) { m[d.agent].handled++; if (d.status === "Converted") m[d.agent].converted++; } });
+    demos.filter((d) => d.agent).forEach((d) => {
+      if (!m[d.agent]) m[d.agent] = { name: d.agent, handled: 0, converted: 0 };
+      m[d.agent].handled++;
+      if (d.status === "Converted") m[d.agent].converted++;
+    });
     return Object.values(m).map((a) => ({ ...a, rate: a.handled ? Math.round((a.converted / a.handled) * 100) : 0 })).sort((a, b) => b.rate - a.rate);
   }, [demos]);
 

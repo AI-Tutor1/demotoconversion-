@@ -2,7 +2,7 @@
 import { useState, useMemo } from "react";
 import { useStore } from "@/lib/store";
 import { StatusBadge, Field, EmptyState } from "@/components/ui";
-import { TEACHERS, AGENTS, ACCT_TYPES, MUTED, BLUE, LIGHT_GRAY } from "@/lib/types";
+import { TEACHERS, ACCT_TYPES, MUTED, BLUE, LIGHT_GRAY } from "@/lib/types";
 import { ageDays, ageColor, ageTextColor, formatMonth, exportCSV } from "@/lib/utils";
 
 export default function SalesPage() {
@@ -14,6 +14,15 @@ export default function SalesPage() {
   const [fAgent, setFAgent] = useState("");
   const [sort, setSort] = useState("date-desc");
   const [sf, setSf] = useState({status:"Converted",salesAgentId:"",comments:"",verbatim:"",marketing:false,link:"",acctType:""});
+
+  // Union of current DB sales_agents + any historical agent strings on demos,
+  // so the filter can match both new assignments (by full_name) and seed/legacy rows.
+  const agentOptions = useMemo(() => {
+    const names = new Set<string>();
+    salesAgents.forEach((a) => names.add(a.full_name));
+    rangedDemos.forEach((d) => { if (d.agent) names.add(d.agent); });
+    return Array.from(names).sort();
+  }, [salesAgents, rangedDemos]);
 
   const filtered = useMemo(() => {
     let d = rangedDemos.filter(x => {
@@ -75,7 +84,7 @@ export default function SalesPage() {
           </div>
           <div style={{display:"flex",gap:8,marginTop:8,flexWrap:"wrap"}}>
             <select value={fTeacher} onChange={e => setFTeacher(e.target.value)} className="filter-select-dark"><option value="">All teachers</option>{TEACHERS.map(t => <option key={t.id} value={t.name}>{t.name}</option>)}</select>
-            <select value={fAgent} onChange={e => setFAgent(e.target.value)} className="filter-select-dark"><option value="">All agents</option>{AGENTS.map(a => <option key={a} value={a}>{a}</option>)}</select>
+            <select value={fAgent} onChange={e => setFAgent(e.target.value)} className="filter-select-dark"><option value="">All agents</option>{agentOptions.map(a => <option key={a} value={a}>{a}</option>)}</select>
             <select value={sort} onChange={e => setSort(e.target.value)} className="filter-select-dark"><option value="date-desc">Newest</option><option value="date-asc">Oldest</option><option value="rating-desc">Highest rated</option><option value="age-desc">Longest pending</option></select>
             {hasFilters && <button className="pill" onClick={() => {setFStatus("All");setFTeacher("");setFAgent("");}} style={{background:"rgba(255,255,255,.1)",color:"#fff",border:"1px solid rgba(255,255,255,.2)",fontSize:11,padding:"4px 12px"}}>Clear all</button>}
           </div>
