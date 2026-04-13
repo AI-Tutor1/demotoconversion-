@@ -19,7 +19,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-import httpx
+import gdown
 from openai import AsyncOpenAI
 
 from app.config import settings
@@ -62,77 +62,30 @@ def extract_file_id(url: str) -> str | None:
     return None
 
 
-def _extract_confirm_token(html: str) -> str | None:
-    """Google Drive's virus-scan confirmation page carries a confirm token.
-    Token appears in `confirm=XXXX` either in a form `value=` or query string.
-    """
-    m = re.search(r'name="confirm"\s+value="([^"]+)"', html)
-    if m:
-        return m.group(1)
-    m = re.search(r"[?&]confirm=([0-9A-Za-z_-]+)", html)
-    if m:
-        return m.group(1)
-    return None
-
-
-def _extract_uuid(html: str) -> str | None:
-    """Newer Google Drive scan pages also include a uuid token."""
-    m = re.search(r'name="uuid"\s+value="([^"]+)"', html)
-    if m:
-        return m.group(1)
-    m = re.search(r"[?&]uuid=([0-9a-f-]+)", html)
-    if m:
-        return m.group(1)
-    return None
-
-
 # ─── Download ─────────────────────────────────────────────────
 
 
 async def _download_gdrive(
     file_id: str, dest_path: Path, timeout_s: float = 300.0
 ) -> None:
-    """Stream a Google Drive file to disk, handling the virus-scan confirmation
-    page for files > ~25 MB. Raises RuntimeError on failure."""
-    base = "https://drive.google.com/uc"
-    download_url = f"{base}?export=download&id={file_id}"
+    """Download a Google Drive file using gdown. gdown handles the virus-scan
+    confirmation page, large-file redirects, and cookies that our custom
+    downloader tripped over. Raises RuntimeError on empty/failed download."""
+    url = f"https://drive.google.com/uc?id={file_id}"
 
-    async with httpx.AsyncClient(follow_redirects=True, timeout=timeout_s) as client:
-        async with client.stream("GET", download_url) as response:
-            response.raise_for_status()
-            content_type = response.headers.get("content-type", "").lower()
-            if "text/html" not in content_type:
-                # Small or already-confirmed — stream directly
-                with open(dest_path, "wb") as fh:
-                    async for chunk in response.aiter_bytes(chunk_size=1024 * 1024):
-                        fh.write(chunk)
-                return
-            # It's the HTML scan page — pull full text so we can find the confirm token
-            html = (await response.aread()).decode("utf-8", errors="replace")
+    def _sync_download() -> None:
+        gdown.download(url, str(dest_path), quiet=True, fuzzy=True)
 
-        confirm_token = _extract_confirm_token(html)
-        if not confirm_token:
-            raise RuntimeError(
-                "Google Drive returned an HTML scan page without a confirm token. "
-                "The file may be private, the link may not be set to 'Anyone with the link', "
-                "or the URL is not for a downloadable file."
-            )
-        params: dict[str, str] = {"id": file_id, "export": "download", "confirm": confirm_token}
-        uuid_token = _extract_uuid(html)
-        if uuid_token:
-            params["uuid"] = uuid_token
+    await asyncio.wait_for(
+        asyncio.to_thread(_sync_download),
+        timeout=timeout_s,
+    )
 
-        async with client.stream("GET", base, params=params) as response:
-            response.raise_for_status()
-            content_type = response.headers.get("content-type", "").lower()
-            if "text/html" in content_type:
-                raise RuntimeError(
-                    "Google Drive still returning HTML after confirmation — file may be inaccessible "
-                    "or require sign-in."
-                )
-            with open(dest_path, "wb") as fh:
-                async for chunk in response.aiter_bytes(chunk_size=1024 * 1024):
-                    fh.write(chunk)
+    if not dest_path.exists() or dest_path.stat().st_size < 1024:
+        raise RuntimeError(
+            "Download failed or file is empty. Ensure the Google Drive link is set to "
+            "'Anyone with the link' and points to a downloadable file."
+        )
 
 
 # ─── ffmpeg ───────────────────────────────────────────────────

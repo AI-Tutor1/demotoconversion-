@@ -1,9 +1,9 @@
 """Ingest agent tests.
 
-Network-free: Google Drive URL parsing, virus-scan confirm token extraction,
-transcript formatter + speaker heuristic. The download / ffmpeg / Whisper
-paths are verified manually during Step 6 (no live tests in CI to keep
-Whisper costs + network flakiness out of the suite).
+Network-free: Google Drive URL parsing, transcript formatter + speaker
+heuristic. The download (gdown) / ffmpeg / Whisper paths are verified
+manually during Step 6 — no live tests in CI to keep Whisper costs +
+network flakiness out of the suite.
 """
 
 from types import SimpleNamespace
@@ -11,8 +11,6 @@ from types import SimpleNamespace
 import pytest
 
 from agents.ingest import (
-    _extract_confirm_token,
-    _extract_uuid,
     _format_transcript,
     _guess_speaker,
     extract_file_id,
@@ -59,28 +57,6 @@ def test_extract_file_id_recognized_formats(url: str, expected: str) -> None:
 )
 def test_extract_file_id_rejects_non_gdrive(url: str) -> None:
     assert extract_file_id(url) is None
-
-
-# ─── Virus-scan page token extraction ─────────────────────────
-
-
-def test_extract_confirm_token_from_form_value() -> None:
-    html = '<form><input name="confirm" value="abc123_-xyz"></form>'
-    assert _extract_confirm_token(html) == "abc123_-xyz"
-
-
-def test_extract_confirm_token_from_query_string() -> None:
-    html = '<a href="/uc?export=download&confirm=TOKEN_42&id=FILEID">Download</a>'
-    assert _extract_confirm_token(html) == "TOKEN_42"
-
-
-def test_extract_confirm_token_absent_returns_none() -> None:
-    assert _extract_confirm_token("<html><body>Nothing to confirm</body></html>") is None
-
-
-def test_extract_uuid_from_form_value() -> None:
-    html = '<input name="uuid" value="aaaa1111-bbbb-2222-cccc-333333333333">'
-    assert _extract_uuid(html) == "aaaa1111-bbbb-2222-cccc-333333333333"
 
 
 # ─── Transcript formatter + speaker heuristic ─────────────────
