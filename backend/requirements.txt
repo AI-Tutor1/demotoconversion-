@@ -6,6 +6,7 @@
 fastapi==0.115.0
 uvicorn[standard]==0.32.0
 anthropic==0.40.0
+openai>=1.40.0,<2
 langgraph>=0.2.60,<0.3
 langchain-anthropic>=0.3.0,<0.4
 langchain-core>=0.3.23,<0.4

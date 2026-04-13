@@ -5,6 +5,7 @@ class Settings(BaseSettings):
     """Runtime configuration. Fails fast at import if any required key is missing."""
 
     anthropic_api_key: str
+    openai_api_key: str
     supabase_url: str
     supabase_service_role_key: str
 

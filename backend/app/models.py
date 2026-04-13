@@ -9,22 +9,44 @@ class PourIssue(BaseModel):
     description: str
 
 
-class DraftOutput(BaseModel):
-    """Exact shape the Demo Analyst agent produces (and what lands in demo_drafts.draft_data)."""
+class ScoreEvidence(BaseModel):
+    """A single QA-scorecard question result: the numeric score + the transcript
+    evidence that grounds it. Every score must cite observable evidence; if not
+    observed, score at the lowest level, not a middle estimate."""
 
+    score: int
+    evidence: str
+
+
+class DraftOutput(BaseModel):
+    """Enhanced QA Scorecard output from the Demo Analyst agent.
+
+    Replaces the old freeform methodology/topic/... shape. Stored as-is in
+    demo_drafts.draft_data (JSONB) so analytics can aggregate over any subset.
+    """
+
+    q1_teaching_methodology: ScoreEvidence
+    q2_curriculum_alignment: ScoreEvidence
+    q3_student_interactivity: ScoreEvidence
+    q4_differentiated_teaching: ScoreEvidence
+    q5_psychological_safety: ScoreEvidence
+    q6_rapport_session_opening: ScoreEvidence
+    q7_technical_quality: ScoreEvidence
+    q8_formative_assessment: ScoreEvidence
+    # Sum of Q1..Q8. The prompt calls it "Max 25" but the actual max across
+    # the per-question scales (5+5+3+5+5+1+5+3) is 32. Upper bound set to 32
+    # to match reality; score-interpretation bands stay as specified (22-25
+    # Excellent, etc.) but may want retuning against the true ceiling.
+    total_score: int = Field(..., ge=0, le=32)
+    score_interpretation: str
     pour_issues: list[PourIssue]
-    methodology: str
-    topic: str
-    resources: str
-    engagement: str
-    effectiveness: str
-    suggested_rating: int = Field(..., ge=1, le=5)
-    suggestions: str
+    overall_summary: str
+    improvement_suggestions: str
     improvement_focus: str
 
 
 class DemoRow(BaseModel):
-    """Minimal shape of a demos row the agent needs. DB has more columns; we read just what's relevant."""
+    """Minimal shape of a demos row the agents need. DB has more columns."""
 
     id: int
     student: str
@@ -32,6 +54,7 @@ class DemoRow(BaseModel):
     level: str
     subject: str
     transcript: Optional[str] = None
+    recording: Optional[str] = None
 
 
 class AnalysisResponse(BaseModel):
@@ -39,7 +62,6 @@ class AnalysisResponse(BaseModel):
 
     Shape matches the frontend `DemoDraft` type exactly (field named `id`,
     not `draft_id`) so `fetch()` callers can cast the response directly.
-    Same shape as `supabase.from('demo_drafts').select('*')` rows.
     """
 
     id: str
@@ -48,3 +70,27 @@ class AnalysisResponse(BaseModel):
     status: str
     draft_data: DraftOutput
     created_at: datetime
+
+
+# ─── Ingest agent ─────────────────────────────────────────────
+
+class IngestResult(BaseModel):
+    """Internal return from the ingest agent's `run()` — not serialized to HTTP."""
+
+    transcript: str
+    duration_seconds: int
+    audio_size_bytes: int
+    whisper_language: str
+    whisper_duration: float  # seconds of processing time on OpenAI's side
+
+
+class ProcessRecordingResponse(BaseModel):
+    """Response from POST /api/v1/demos/{id}/process-recording."""
+
+    demo_id: int
+    transcript_length: int
+    duration_seconds: int
+    analysis_draft_id: Optional[str] = None
+    # "transcribed_and_analyzed" — happy path
+    # "transcription_only"       — transcript saved but auto-chained analysis failed
+    status: str

@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from .routers import demos
+from .routers import demos, ingest
 
 app = FastAPI(
     title="Demo to Conversion — AI Backend",
@@ -19,6 +19,7 @@ app.add_middleware(
 )
 
 app.include_router(demos.router, prefix="/api/v1/demos", tags=["demos"])
+app.include_router(ingest.router, prefix="/api/v1/demos", tags=["ingest"])
 
 
 @app.get("/health")

@@ -2,9 +2,11 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# System deps for psycopg/supabase-py wheels
+# System deps:
+#   build-essential + curl — supabase-py / psycopg wheel fallbacks
+#   ffmpeg                  — audio extraction for the ingest agent
 RUN apt-get update \
- && apt-get install -y --no-install-recommends build-essential curl \
+ && apt-get install -y --no-install-recommends build-essential curl ffmpeg \
  && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt ./
