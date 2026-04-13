@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useStore } from "@/lib/store";
 import { StatusBadge } from "@/components/ui";
 import { initials } from "@/lib/utils";
@@ -23,6 +23,16 @@ export default function DashboardPage() {
   const [analyzingId, setAnalyzingId] = useState<number | null>(null);
 
   const canAnalyze = user?.role === "analyst" || user?.role === "manager";
+
+  // Fix 6 — for managers: count demos sitting in pending_sales with no sales agent.
+  // Auto-assign (analyst form, Fix 2) should prevent new ones, but seed data
+  // and legacy rows may still need manual attention.
+  const unassignedSalesCount = useMemo(() => {
+    if (user?.role !== "manager") return 0;
+    return rangedDemos.filter(
+      (d) => d.workflowStage === "pending_sales" && !d.salesAgentId
+    ).length;
+  }, [user?.role, rangedDemos]);
 
   const onAnalyze = async (demoId: number) => {
     setAnalyzingId(demoId);
@@ -87,6 +97,25 @@ export default function DashboardPage() {
       <section style={{ background: "#fff", padding: "44px 24px" }}>
         <div style={{ maxWidth: 1100, margin: "0 auto", display: "grid", gridTemplateColumns: "minmax(0,1fr) minmax(0,300px)", gap: 24 }}>
           <div>
+            {unassignedSalesCount > 0 && (
+              <Link
+                href="/sales"
+                style={{
+                  display: "block",
+                  padding: "10px 14px",
+                  marginBottom: 16,
+                  borderRadius: 10,
+                  background: "#FFF8E1",
+                  border: "1px solid #F5D98E",
+                  color: "#8B6914",
+                  fontSize: 13,
+                  textDecoration: "none",
+                  fontWeight: 500,
+                }}
+              >
+                ⚠ {unassignedSalesCount} demo{unassignedSalesCount === 1 ? "" : "s"} in Pending sales with no sales agent — click to assign
+              </Link>
+            )}
             <h2 style={{ fontSize: 24, fontWeight: 600, marginBottom: 16 }}>Recent demos</h2>
             {rangedDemos.length === 0 && (
               <div style={{ padding: "32px 20px", textAlign: "center", background: LIGHT_GRAY, borderRadius: 12, color: MUTED, fontSize: 13, lineHeight: 1.47 }}>

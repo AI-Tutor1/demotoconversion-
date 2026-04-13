@@ -17,7 +17,7 @@ export default function AnalystPage() {
 }
 
 function AnalystForm() {
-  const { setDemos, flash, logActivity } = useStore();
+  const { setDemos, flash, logActivity, user, salesAgents, demos } = useStore();
   // Query-param prefill — used by the "Reject AI draft" flow so the analyst
   // can rewrite the review from scratch with the demo metadata already filled in.
   const params = useSearchParams();
@@ -32,6 +32,7 @@ function AnalystForm() {
     suggestions: "",
     improvement: "",
     recording: "",
+    transcript: "",
     studentRaw: 7,
     analystRating: 0,
   };
@@ -81,20 +82,51 @@ function AnalystForm() {
     // shouldFire dedup catches the second INSERT. Calling Date.now()
     // inside the updater creates two rows with ids off-by-one.
     const now = Date.now();
+
+    // Fix 2 — round-robin auto-assign to the sales agent with the fewest
+    // currently-assigned demos. Pure frontend: count from `demos` in state,
+    // pick lowest, set salesAgentId + agent display name. Phase 3's Router
+    // Agent will eventually replace this with smarter routing.
+    let assignedAgentId: string | null = null;
+    let assignedAgentName = "";
+    if (salesAgents.length > 0) {
+      const counts = new Map<string, number>(salesAgents.map((a) => [a.id, 0]));
+      demos.forEach((d) => {
+        if (d.salesAgentId && counts.has(d.salesAgentId)) {
+          counts.set(d.salesAgentId, (counts.get(d.salesAgentId) ?? 0) + 1);
+        }
+      });
+      const [lowestId] = [...counts.entries()].sort((a, b) => a[1] - b[1])[0];
+      assignedAgentId = lowestId;
+      assignedAgentName = salesAgents.find((a) => a.id === lowestId)?.full_name ?? "";
+    }
+
     const newDemo = {
       id: now, date: f.date, teacher: f.teacher, tid: t ? t.uid : 0,
       student, level: f.level, subject: f.subject, pour: pourArr,
       review: f.methodology, studentRaw: f.studentRaw, analystRating: f.analystRating,
       status: "Pending" as const, suggestions: f.suggestions, improvement: f.improvement,
-      agent: "", comments: "", verbatim: "", acctType: "", link: "",
-      recording: f.recording, transcript: null,
+      agent: assignedAgentName, comments: "", verbatim: "", acctType: "", link: "",
+      recording: f.recording, transcript: f.transcript || null,
       topicReview: "", resourcesReview: "", effectivenessReview: "",
       marketing: false, ts: now,
-      workflowStage: "pending_sales" as const, salesAgentId: null,
+      workflowStage: "pending_sales" as const,
+      salesAgentId: assignedAgentId,
+      analystId: user?.id ?? null,
     };
     setDemos((p) => [newDemo, ...p]);
-    logActivity("submitted", "Analyst", student + " demo");
-    flash("Demo submitted to sales queue");
+    logActivity(
+      "submitted",
+      user?.full_name ?? "Analyst",
+      assignedAgentName
+        ? `${student} demo → ${assignedAgentName}`
+        : `${student} demo (unassigned)`
+    );
+    flash(
+      assignedAgentName
+        ? `Demo submitted → assigned to ${assignedAgentName}`
+        : "Demo submitted (no sales agent available)"
+    );
     setF(blank);
     setErrors({});
     setTimeout(() => setSubmitting(false), 1000);
@@ -134,6 +166,15 @@ function AnalystForm() {
             </div>
             <Field label="Recording URL">
               <input type="url" className="apple-input" placeholder="https://zoom.us/rec/..." value={f.recording} onChange={(e) => u("recording", e.target.value)} />
+            </Field>
+            <Field label="Transcript (paste from Zoom/Meet — enables AI analysis)">
+              <textarea
+                className="apple-input apple-textarea"
+                style={{ minHeight: 120, fontSize: 12, fontFamily: "ui-monospace, Menlo, monospace" }}
+                placeholder="[00:00] Teacher: Hello! ..."
+                value={f.transcript}
+                onChange={(e) => u("transcript", e.target.value)}
+              />
             </Field>
             <Field label="Student name *" error={errors.student}>
               <input className={"apple-input" + (errors.student ? " error" : "")} placeholder="Full name" value={f.student} onChange={(e) => u("student", e.target.value)} />

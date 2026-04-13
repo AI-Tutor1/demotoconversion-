@@ -51,6 +51,7 @@ export interface Demo {
   ts: number;
   workflowStage: WorkflowStage;
   salesAgentId: string | null;
+  analystId: string | null;
 }
 
 // AI-generated draft output stored in the demo_drafts table.

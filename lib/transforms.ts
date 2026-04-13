@@ -88,6 +88,7 @@ export function dbRowToDemo(row: DemoRow): Demo {
     ts: Number(row.ts),
     workflowStage: (row.workflow_stage as WorkflowStage) ?? "new",
     salesAgentId: row.sales_agent_id ?? null,
+    analystId: row.analyst_id ?? null,
   };
 }
 
@@ -129,6 +130,7 @@ export function demoToInsertRow(d: Demo): Record<string, unknown> {
     ts: d.ts,
     workflow_stage: d.workflowStage ?? statusToStage(d.status),
     sales_agent_id: d.salesAgentId ?? null,
+    analyst_id: d.analystId ?? null,
   };
 }
 
@@ -169,6 +171,7 @@ export function demoUpdatesToDb(partial: Partial<Demo>): Record<string, unknown>
   if ("marketing" in partial) out.marketing = partial.marketing;
   if ("ts" in partial) out.ts = partial.ts;
   if ("salesAgentId" in partial) out.sales_agent_id = partial.salesAgentId ?? null;
+  if ("analystId" in partial) out.analyst_id = partial.analystId ?? null;
   return out;
 }
 
