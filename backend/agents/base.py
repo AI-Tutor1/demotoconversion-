@@ -24,7 +24,7 @@ async def fetch_demo(demo_id: int) -> Optional[DemoRow]:
         sb = get_supabase()
         res = (
             sb.table("demos")
-            .select("id, student, teacher, level, subject, transcript")
+            .select("id, student, teacher, level, subject, transcript, recording")
             .eq("id", demo_id)
             .limit(1)
             .execute()

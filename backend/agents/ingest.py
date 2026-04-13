@@ -170,11 +170,12 @@ async def _transcribe(audio_path: Path) -> tuple[Any, float]:
     client = AsyncOpenAI(api_key=settings.groq_api_key, base_url=GROQ_BASE_URL)
     started = time.monotonic()
     with open(audio_path, "rb") as f:
+        # verbose_json already returns segment-level timestamps; Groq rejects
+        # the OpenAI-specific `timestamp_granularities` parameter.
         response = await client.audio.transcriptions.create(
             model=GROQ_WHISPER_MODEL,
             file=f,
             response_format="verbose_json",
-            timestamp_granularities=["segment"],
         )
     elapsed = time.monotonic() - started
     return response, elapsed
