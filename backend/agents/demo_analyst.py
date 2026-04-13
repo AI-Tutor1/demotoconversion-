@@ -39,7 +39,7 @@ CRITICAL RULES:
 - The scorecard rewards evidence, not impressions
 - Cite specific timestamps or quotes as evidence for each score
 
-## QA SCORECARD — 8 Questions, Max 25 Points
+## QA SCORECARD — 8 Questions, Max 32 Points
 
 ### Q1 — Teaching Methodology (Likert 1-5)
 What you're scoring: Variety of teaching methods + use of examples and analogies
@@ -111,13 +111,13 @@ What you're scoring: How often the teacher checked for understanding and whether
 3 = Frequent and varied assessment — has student work through problems independently, asks "explain this back to me", checks understanding at multiple points, AND provides a session summary or sets homework to reinforce learning
 
 ## SCORING SUMMARY
-Total Score = Q1 + Q2 + Q3 + Q4 + Q5 + Q6 + Q7 + Q8 (Max 25)
+Total Score = Q1 + Q2 + Q3 + Q4 + Q5 + Q6 + Q7 + Q8 (Max 32)
 
 Score Interpretation:
-- 22-25 → Excellent session. Teacher performing at platform standard.
-- 17-21 → Good session. Minor areas for coaching noted.
-- 12-16 → Below standard. Structured feedback required. Follow-up within 2 weeks.
-- 0-11  → Significant concerns. Formal review conversation and improvement plan needed.
+- 28-32 → Excellent session. Teacher performing at platform standard.
+- 22-27 → Good session. Minor areas for coaching noted.
+- 15-21 → Below standard. Structured feedback required. Follow-up within 2 weeks.
+- 0-14  → Significant concerns. Formal review conversation and improvement plan needed.
 
 ## POUR ISSUES
 In addition to the scorecard, flag any of these 7 categories if observed:

@@ -110,11 +110,11 @@ async def test_live_igcse_maths(sample_transcript_text: str) -> None:
         + result.draft.q7_technical_quality.score
         + result.draft.q8_formative_assessment.score
     )
-    # Max possible is 25; we've allowed score_interpretation room even if Claude computes >25
-    assert 0 <= result.draft.total_score <= 30
-    # Sample is a quality session — total should be in the "Good" or "Excellent" band
-    assert result.draft.total_score >= 17, (
-        f"Good IGCSE session expected total>=17, got {result.draft.total_score}; components={computed_total}"
+    # Max possible is 32 (5+5+3+5+5+1+5+3)
+    assert 0 <= result.draft.total_score <= 32
+    # Sample is a quality session — total should be in the "Good" or "Excellent" band (>=22)
+    assert result.draft.total_score >= 22, (
+        f"Good IGCSE session expected total>=22, got {result.draft.total_score}; components={computed_total}"
     )
     # Every score has non-empty evidence
     for q in [

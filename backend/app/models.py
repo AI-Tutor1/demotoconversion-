@@ -33,10 +33,9 @@ class DraftOutput(BaseModel):
     q6_rapport_session_opening: ScoreEvidence
     q7_technical_quality: ScoreEvidence
     q8_formative_assessment: ScoreEvidence
-    # Sum of Q1..Q8. The prompt calls it "Max 25" but the actual max across
-    # the per-question scales (5+5+3+5+5+1+5+3) is 32. Upper bound set to 32
-    # to match reality; score-interpretation bands stay as specified (22-25
-    # Excellent, etc.) but may want retuning against the true ceiling.
+    # Sum of Q1..Q8. Per-question scales are 5+5+3+5+5+1+5+3 = 32.
+    # Interpretation bands in the prompt: 28-32 Excellent, 22-27 Good,
+    # 15-21 Below, 0-14 Concerns.
     total_score: int = Field(..., ge=0, le=32)
     score_interpretation: str
     pour_issues: list[PourIssue]

@@ -1,5 +1,8 @@
 """Ingest agent — Google Drive download + ffmpeg audio extract + Whisper transcription.
 
+Transcription uses Groq's OpenAI-compatible Whisper endpoint (whisper-large-v3) —
+drop-in for the OpenAI Whisper API, faster and cheaper.
+
 Pure: does not touch Supabase. Caller orchestrates: take the returned transcript,
 UPDATE demos.transcript immediately, THEN chain into Demo Analyst.
 
@@ -24,11 +27,17 @@ from app.models import IngestResult
 
 AGENT_NAME = "ingest"
 
-# OpenAI Whisper API hard limit on uploaded file size.
+# Groq Whisper API free-tier file-size ceiling (paid tier raises it, but
+# 25 MB keeps us compatible across plans).
 WHISPER_MAX_BYTES = 25 * 1024 * 1024
 
+# Groq's OpenAI-compatible endpoint + model. Using whisper-large-v3 for
+# highest accuracy; swap to whisper-large-v3-turbo for lower latency.
+GROQ_BASE_URL = "https://api.groq.com/openai/v1"
+GROQ_WHISPER_MODEL = "whisper-large-v3"
+
 # ffmpeg flags: no video, mono, 16 kHz sample rate (Whisper's native), 48 kbps mp3.
-# ~22 MB for a 60-minute recording — well under the Whisper 25 MB ceiling.
+# ~22 MB for a 60-minute recording — well under the 25 MB ceiling.
 FFMPEG_FLAGS = ["-vn", "-ac", "1", "-ar", "16000", "-b:a", "48k", "-f", "mp3"]
 
 # Google Drive URL formats we try to match.
@@ -156,12 +165,13 @@ async def _extract_audio(
 
 
 async def _transcribe(audio_path: Path) -> tuple[Any, float]:
-    """Call OpenAI Whisper. Returns (VerboseTranscription response, wall-clock seconds)."""
-    client = AsyncOpenAI(api_key=settings.openai_api_key)
+    """Call Groq Whisper via its OpenAI-compatible endpoint.
+    Returns (VerboseTranscription response, wall-clock seconds)."""
+    client = AsyncOpenAI(api_key=settings.groq_api_key, base_url=GROQ_BASE_URL)
     started = time.monotonic()
     with open(audio_path, "rb") as f:
         response = await client.audio.transcriptions.create(
-            model="whisper-1",
+            model=GROQ_WHISPER_MODEL,
             file=f,
             response_format="verbose_json",
             timestamp_granularities=["segment"],
@@ -263,7 +273,7 @@ async def run(demo_id: int, recording_url: str) -> IngestResult:
         audio_size = audio_path.stat().st_size
         if audio_size > WHISPER_MAX_BYTES:
             raise RuntimeError(
-                f"Audio {audio_size // (1024 * 1024)} MB exceeds Whisper API 25 MB limit. "
+                f"Audio {audio_size // (1024 * 1024)} MB exceeds Groq Whisper 25 MB limit. "
                 f"Recording is too long — transcript chunking is a Phase 4 feature."
             )
 

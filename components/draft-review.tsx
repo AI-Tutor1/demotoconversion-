@@ -74,20 +74,20 @@ function scoreColor(score: number, max: number): string {
   return "#E24B4A"; // red
 }
 
-// Interpretation badge from total score (spec bands — may need retuning since actual max is 32, not 25)
+// Interpretation bands for the 32-point scorecard (5+5+3+5+5+1+5+3 = 32).
 function interpretationBadge(total: number): { label: string; bg: string; fg: string } {
-  if (total >= 22) return { label: "Excellent", bg: "#E8F5E9", fg: "#1B5E20" };
-  if (total >= 17) return { label: "Good", bg: "#E3F2FD", fg: "#0D47A1" };
-  if (total >= 12) return { label: "Below Standard", bg: "#FFF8E1", fg: "#8B6914" };
+  if (total >= 28) return { label: "Excellent", bg: "#E8F5E9", fg: "#1B5E20" };
+  if (total >= 22) return { label: "Good", bg: "#E3F2FD", fg: "#0D47A1" };
+  if (total >= 15) return { label: "Below Standard", bg: "#FFF8E1", fg: "#8B6914" };
   return { label: "Significant Concerns", bg: "#FFEBEE", fg: "#B71C1C" };
 }
 
-// Map total_score → demo.analystRating (1-5) using the spec's bands
+// Map total_score → demo.analystRating (1-5), proportional to the interpretation bands.
 function totalToAnalystRating(total: number): number {
-  if (total >= 22) return 5;
-  if (total >= 17) return 4;
-  if (total >= 12) return 3;
-  if (total >= 6) return 2;
+  if (total >= 28) return 5;
+  if (total >= 22) return 4;
+  if (total >= 15) return 3;
+  if (total >= 8) return 2;
   return 1;
 }
 
