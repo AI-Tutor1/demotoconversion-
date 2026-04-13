@@ -1,0 +1,31 @@
+-- Seed the IGCSE Maths sample transcript into Ahmed Khan (demo id=1)
+-- so /api/v1/demos/1/analyze has data to work with during Phase 3 testing.
+-- Transcript content matches backend/transcripts/sample_igcse_math.txt verbatim.
+-- Dollar-quoted string avoids all escaping issues with ', ², ±, √, etc.
+
+UPDATE public.demos
+   SET transcript = $transcript$[00:00] Teacher: Hello! Can you hear me? Is the video working?
+[00:05] Student: Yes, I can hear you. Video is fine.
+[00:10] Teacher: Great! So today we're going to look at quadratic equations. Can you tell me what you already know about them?
+[00:18] Student: Um, I know they have x-squared in them? And something about factoring?
+[00:25] Teacher: That's a good start! So a quadratic equation has the form ax² + bx + c = 0. Let me share my screen and show you on the whiteboard.
+[00:35] Teacher: [shares screen with digital whiteboard] Can you see this?
+[00:38] Student: Yes.
+[00:40] Teacher: Okay, so here's our equation: x² + 5x + 6 = 0. The first method we'll use is factoring. We need two numbers that multiply to give us 6 and add to give us 5. What do you think those numbers could be?
+[00:55] Student: 2 and 3?
+[00:57] Teacher: Excellent! So we can write this as (x + 2)(x + 3) = 0. Now, if the product of two things equals zero, what does that tell us?
+[01:08] Student: One of them has to be zero?
+[01:10] Teacher: Exactly! So either x + 2 = 0, giving us x = -2, or x + 3 = 0, giving us x = -3. Let's verify — if I put x = -2 back into the original equation...
+[01:25] Teacher: (-2)² + 5(-2) + 6 = 4 - 10 + 6 = 0. It works! Now you try with x = -3.
+[01:35] Student: (-3)² + 5(-3) + 6 = 9 - 15 + 6 = 0. Yes, it works!
+[01:42] Teacher: Perfect! Now let me give you a slightly harder one. Try x² - 7x + 12 = 0. What two numbers multiply to 12 and add to -7?
+[01:55] Student: Hmm... -3 and -4?
+[01:58] Teacher: Excellent work! You're getting the hang of this. Let's try one more, but this time we'll use the quadratic formula for when factoring doesn't work easily. The formula is x = (-b ± √(b² - 4ac)) / 2a.
+[02:15] Teacher: Let's solve 2x² + 3x - 5 = 0. Here a=2, b=3, c=-5. Can you plug those into the formula?
+[02:30] Student: So it's (-3 ± √(9 - 4(2)(-5))) / (2×2)... that's (-3 ± √(9+40)) / 4... (-3 ± √49) / 4... (-3 ± 7) / 4?
+[02:50] Teacher: Brilliant! So x = (-3+7)/4 = 1 or x = (-3-7)/4 = -2.5. You've got it!
+[02:58] Teacher: For homework, try these five problems. I'll paste them in the chat. Great session today — you picked this up really quickly!
+[03:05] Student: Thank you! This was really helpful. I was confused before but now it makes sense.
+[03:10] Teacher: Glad to hear it! See you next time. Bye!
+$transcript$
+ WHERE id = 1;
