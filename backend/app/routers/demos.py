@@ -112,9 +112,10 @@ async def analyze(demo_id: int) -> AnalysisResponse:
         # Draft is written; cost-tracking row update failure is not fatal.
         pass
 
-    # 7. Shape the response from the inserted draft row + the agent's output
+    # 7. Shape the response from the inserted draft row + the agent's output.
+    # Field `id` (not `draft_id`) so the response matches the frontend DemoDraft type.
     return AnalysisResponse(
-        draft_id=str(draft_row["id"]),
+        id=str(draft_row["id"]),
         demo_id=demo_id,
         agent_name=demo_analyst.AGENT_NAME,
         status=draft_row["status"],
