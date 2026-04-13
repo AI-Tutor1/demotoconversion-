@@ -113,6 +113,20 @@ function AnalystForm() {
       workflowStage: "pending_sales" as const,
       salesAgentId: assignedAgentId,
       analystId: user?.id ?? null,
+      // Sales-feedback defaults — populated later by the sales agent in /sales
+      feedbackRating: 0,
+      feedbackExplanation: null,
+      feedbackExplanationComment: "",
+      feedbackParticipation: null,
+      feedbackParticipationComment: "",
+      feedbackConfused: null,
+      feedbackConfusedDetail: "",
+      feedbackUncomfortable: null,
+      feedbackUncomfortableDetail: "",
+      feedbackPositiveEnv: null,
+      feedbackPositiveEnvComment: "",
+      feedbackSuggestions: "",
+      feedbackComments: "",
     };
     setDemos((p) => [newDemo, ...p]);
     logActivity(

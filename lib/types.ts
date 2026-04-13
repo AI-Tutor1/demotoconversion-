@@ -52,6 +52,21 @@ export interface Demo {
   workflowStage: WorkflowStage;
   salesAgentId: string | null;
   analystId: string | null;
+  // Structured student-feedback questions collected by the sales agent.
+  // Booleans are nullable so "not answered" is distinguishable from Yes/No.
+  feedbackRating: number;
+  feedbackExplanation: boolean | null;
+  feedbackExplanationComment: string;
+  feedbackParticipation: boolean | null;
+  feedbackParticipationComment: string;
+  feedbackConfused: boolean | null;
+  feedbackConfusedDetail: string;
+  feedbackUncomfortable: boolean | null;
+  feedbackUncomfortableDetail: string;
+  feedbackPositiveEnv: boolean | null;
+  feedbackPositiveEnvComment: string;
+  feedbackSuggestions: string;
+  feedbackComments: string;
 }
 
 // AI-generated draft output stored in the demo_drafts table.
