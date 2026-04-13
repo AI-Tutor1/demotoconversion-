@@ -1,7 +1,7 @@
 from datetime import datetime
-from typing import Optional
+from typing import Any, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class PourIssue(BaseModel):
@@ -42,6 +42,26 @@ class DraftOutput(BaseModel):
     overall_summary: str
     improvement_suggestions: str
     improvement_focus: str
+
+    @field_validator("pour_issues", mode="before")
+    @classmethod
+    def coerce_pour_issues(cls, v: Any) -> Any:
+        """Claude sometimes returns pour_issues as plain strings instead of
+        {category, description} objects. Coerce strings back into the expected
+        shape: split on the first colon; fall back to category='Other'."""
+        if not isinstance(v, list):
+            return v
+        coerced: list[Any] = []
+        for item in v:
+            if isinstance(item, str):
+                if ":" in item:
+                    cat, desc = item.split(":", 1)
+                    coerced.append({"category": cat.strip(), "description": desc.strip()})
+                else:
+                    coerced.append({"category": "Other", "description": item.strip()})
+            else:
+                coerced.append(item)
+        return coerced
 
 
 class DemoRow(BaseModel):
