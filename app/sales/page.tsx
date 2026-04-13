@@ -2,7 +2,9 @@
 import { useState, useMemo, useEffect } from "react";
 import { useStore } from "@/lib/store";
 import { StatusBadge, Field, EmptyState } from "@/components/ui";
+import { ScorecardSummary } from "@/components/scorecard-summary";
 import { TEACHERS, ACCT_TYPES, MUTED, BLUE, LIGHT_GRAY, NEAR_BLACK, type Demo } from "@/lib/types";
+import { isFinalized } from "@/lib/scorecard";
 import { ageDays, ageColor, ageTextColor, formatMonth, exportCSV } from "@/lib/utils";
 
 // ─── Inline UI helpers used only on this page ─────────────────────────
@@ -182,7 +184,7 @@ function fromDemo(d: Demo): SalesForm {
 // ─── Page ─────────────────────────────────────────────────────────────
 
 export default function SalesPage() {
-  const { rangedDemos, setDemos, flash, setConfirm, logActivity, salesAgents } = useStore();
+  const { rangedDemos, setDemos, flash, setConfirm, logActivity, salesAgents, draftsByDemoId } = useStore();
   const [selDemo, setSelDemo] = useState<number | null>(null);
   const [bulkSel, setBulkSel] = useState<number[]>([]);
   const [fStatus, setFStatus] = useState("All");
@@ -378,23 +380,39 @@ export default function SalesPage() {
                 <button onClick={() => setSelDemo(null)} style={{ background: LIGHT_GRAY, border: "none", borderRadius: "50%", width: 28, height: 28, cursor: "pointer", fontSize: 14, color: MUTED, display: "flex", alignItems: "center", justifyContent: "center" }}>{"\u2715"}</button>
               </div>
 
-              {/* Analyst review summary (read-only) */}
-              <div style={{ background: LIGHT_GRAY, borderRadius: 12, padding: "14px 18px", marginBottom: 20 }}>
-                <div className="section-label" style={{ marginBottom: 6 }}>Analyst review</div>
-                {sel.recording && (
-                  <p style={{ fontSize: 12, marginBottom: 8 }}>
-                    <span style={{ color: MUTED, marginRight: 6 }}>Recording:</span>
-                    <a href={sel.recording} target="_blank" rel="noopener noreferrer" style={{ color: BLUE, textDecoration: "none", fontWeight: 500 }}>Open ↗</a>
-                  </p>
-                )}
-                <p style={{ fontSize: 13, lineHeight: 1.47 }}>{sel.review || "No review."}</p>
-                {sel.pour.length > 0 && <div style={{ marginTop: 8 }}>{sel.pour.map((pp) => <div key={pp.cat} style={{ marginBottom: 4 }}><span className="pour-tag">{pp.cat}</span>{pp.desc && <span style={{ fontSize: 12, color: MUTED, marginLeft: 6 }}>{pp.desc}</span>}</div>)}</div>}
-                <div style={{ display: "flex", gap: 16, marginTop: 10 }}>
-                  <span style={{ fontSize: 12, color: MUTED }}>Student: <strong>{Math.round(sel.studentRaw / 2)}/5</strong></span>
-                  <span style={{ fontSize: 12, color: MUTED }}>Analyst: <strong>{sel.analystRating}/5</strong></span>
-                </div>
-                {sel.suggestions && <p style={{ fontSize: 12, color: BLUE, marginTop: 6, fontWeight: 500 }}>Suggestion: {sel.suggestions}</p>}
-              </div>
+              {/* Analyst review summary (read-only) — prefer the QA scorecard
+                  when a finalized draft exists; otherwise fall back to the
+                  legacy review text for older demos. */}
+              {(() => {
+                const draft = draftsByDemoId[sel.id];
+                if (draft && isFinalized(draft)) {
+                  return (
+                    <ScorecardSummary
+                      draft={draft}
+                      recording={sel.recording}
+                      studentRaw={sel.studentRaw}
+                    />
+                  );
+                }
+                return (
+                  <div style={{ background: LIGHT_GRAY, borderRadius: 12, padding: "14px 18px", marginBottom: 20 }}>
+                    <div className="section-label" style={{ marginBottom: 6 }}>Analyst review</div>
+                    {sel.recording && (
+                      <p style={{ fontSize: 12, marginBottom: 8 }}>
+                        <span style={{ color: MUTED, marginRight: 6 }}>Recording:</span>
+                        <a href={sel.recording} target="_blank" rel="noopener noreferrer" style={{ color: BLUE, textDecoration: "none", fontWeight: 500 }}>Open ↗</a>
+                      </p>
+                    )}
+                    <p style={{ fontSize: 13, lineHeight: 1.47 }}>{sel.review || "No review."}</p>
+                    {sel.pour.length > 0 && <div style={{ marginTop: 8 }}>{sel.pour.map((pp) => <div key={pp.cat} style={{ marginBottom: 4 }}><span className="pour-tag">{pp.cat}</span>{pp.desc && <span style={{ fontSize: 12, color: MUTED, marginLeft: 6 }}>{pp.desc}</span>}</div>)}</div>}
+                    <div style={{ display: "flex", gap: 16, marginTop: 10 }}>
+                      <span style={{ fontSize: 12, color: MUTED }}>Student: <strong>{Math.round(sel.studentRaw / 2)}/5</strong></span>
+                      <span style={{ fontSize: 12, color: MUTED }}>Analyst: <strong>{sel.analystRating}/5</strong></span>
+                    </div>
+                    {sel.suggestions && <p style={{ fontSize: 12, color: BLUE, marginTop: 6, fontWeight: 500 }}>Suggestion: {sel.suggestions}</p>}
+                  </div>
+                );
+              })()}
 
               {/* Sales input — status + agent */}
               <div className="section-label" style={{ marginBottom: 10 }}>Sales input</div>

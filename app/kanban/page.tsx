@@ -4,6 +4,7 @@ import { useStore } from "@/lib/store";
 import { Stars, EmptyState } from "@/components/ui";
 import { LIGHT_GRAY, MUTED, BLUE, type WorkflowStage } from "@/lib/types";
 import { ageDays, ageColor, ageTextColor } from "@/lib/utils";
+import { interpretationBadge, isFinalized } from "@/lib/scorecard";
 
 const KCOLS: { key: string; label: string; color: string; stage: WorkflowStage; status: "Pending" | "Converted" | "Not Converted" }[] = [
   { key: "new",       label: "New",           color: "#0071e3", stage: "new",           status: "Pending" },
@@ -25,7 +26,7 @@ const STAGE_TO_COL: Record<WorkflowStage, string> = {
 };
 
 export default function KanbanPage() {
-  const { rangedDemos, setDemos, flash, setConfirm, logActivity } = useStore();
+  const { rangedDemos, setDemos, flash, setConfirm, logActivity, draftsByDemoId } = useStore();
   const [dragOver, setDragOver] = useState<string | null>(null);
   const [dragging, setDragging] = useState<{ card: typeof rangedDemos[0]; from: string } | null>(null);
 
@@ -82,13 +83,33 @@ export default function KanbanPage() {
               <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
                 {board[col.key].map((card) => {
                   const age = ageDays(card.ts);
+                  const draft = draftsByDemoId[card.id];
+                  const finalized = draft && isFinalized(draft) ? draft : null;
+                  const badge = finalized ? interpretationBadge(finalized.draft_data.total_score) : null;
                   return (
                     <div key={card.id} className="kanban-card" draggable onDragStart={() => setDragging({ card, from: col.key })}>
                       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "start" }}>
                         <div><div style={{ fontSize: 12, fontWeight: 600, lineHeight: 1.3 }}>{card.student}</div><div style={{ fontSize: 10, color: MUTED, marginTop: 1 }}>{card.teacher}</div></div>
                         <span style={{ fontSize: 9, fontWeight: 600, padding: "1px 6px", borderRadius: 980, background: ageColor(age), color: ageTextColor(age), flexShrink: 0 }}>{age === 0 ? "Today" : age + "d"}</span>
                       </div>
-                      <div style={{ fontSize: 10, color: MUTED, marginTop: 4 }}>{card.level} {card.subject}</div>
+                      <div style={{ fontSize: 10, color: MUTED, marginTop: 4, display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                        <span>{card.level} {card.subject}</span>
+                        {finalized && badge && (
+                          <span
+                            title={`${badge.label} — based on analyst QA scorecard`}
+                            style={{
+                              fontSize: 9,
+                              fontWeight: 700,
+                              padding: "1px 6px",
+                              borderRadius: 980,
+                              background: badge.bg,
+                              color: badge.fg,
+                            }}
+                          >
+                            {finalized.draft_data.total_score}/32
+                          </span>
+                        )}
+                      </div>
                       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 5 }}>
                         <div>{card.pour.length > 0 ? card.pour.map((pp) => <span key={pp.cat} className="pour-tag" style={{ fontSize: 9 }}>{pp.cat}</span>) : <span style={{ fontSize: 9, color: MUTED, fontStyle: "italic" }}>No issues</span>}</div>
                         <Stars value={card.analystRating} readOnly onChange={() => {}} />

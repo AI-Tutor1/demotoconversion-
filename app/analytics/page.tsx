@@ -2,6 +2,7 @@
 import { useMemo } from "react";
 import { useStore } from "@/lib/store";
 import { EmptyState } from "@/components/ui";
+import { AnalyticsScorecard } from "@/components/analytics-scorecard";
 import { POUR_CATS, MUTED, BLUE, LIGHT_GRAY, NEAR_BLACK, CARD_DARK } from "@/lib/types";
 import { ageDays, formatMonth } from "@/lib/utils";
 import { BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Area, AreaChart } from "recharts";
@@ -129,6 +130,9 @@ export default function AnalyticsPage() {
           </div>
         </div>
       </section>
+
+      {/* QA Scorecard analytics */}
+      <AnalyticsScorecard demos={demos} />
 
       {/* Accountability + Aging + Subject */}
       <section style={{ background: LIGHT_GRAY, padding: "32px 24px" }}>

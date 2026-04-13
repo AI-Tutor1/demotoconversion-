@@ -2,6 +2,7 @@
 import { useState, useMemo } from "react";
 import { useStore } from "@/lib/store";
 import { Stars, StatusBadge, EmptyState } from "@/components/ui";
+import { TeacherScorecard } from "@/components/teacher-scorecard";
 import { LIGHT_GRAY, MUTED, BLUE, NEAR_BLACK } from "@/lib/types";
 import { initials } from "@/lib/utils";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from "recharts";
@@ -75,6 +76,7 @@ export default function TeachersPage() {
                 <div><h3 style={{ fontSize: 24, fontWeight: 600 }}>{drill}</h3><p style={{ fontSize: 13, color: MUTED, marginTop: 3 }}>{drillData.total} demos · {drillData.rate}% conversion · {drillData.avg}/5 avg</p></div>
                 <button onClick={() => setDrill(null)} style={{ background: LIGHT_GRAY, border: "none", borderRadius: "50%", width: 28, height: 28, cursor: "pointer", fontSize: 14, color: MUTED, display: "flex", alignItems: "center", justifyContent: "center" }}>{"\u2715"}</button>
               </div>
+              <TeacherScorecard demos={drillData.demos} />
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: 16 }}>
                 <div>
                   <div className="section-label" style={{ marginBottom: 8 }}>Rating per demo</div>
