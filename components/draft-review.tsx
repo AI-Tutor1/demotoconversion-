@@ -12,49 +12,18 @@ import {
   type DemoDraft,
   type ScoreEvidence,
 } from "@/lib/types";
+import {
+  Q_KEYS,
+  Q_META,
+  type QKey,
+  interpretationBadge,
+  scoreColor,
+  totalToAnalystRating,
+} from "@/lib/scorecard";
 
 // ─── Scorecard metadata ───────────────────────────────────────
 
-type QKey =
-  | "q1_teaching_methodology"
-  | "q2_curriculum_alignment"
-  | "q3_student_interactivity"
-  | "q4_differentiated_teaching"
-  | "q5_psychological_safety"
-  | "q6_rapport_session_opening"
-  | "q7_technical_quality"
-  | "q8_formative_assessment";
-
 type OtherKey = "pour_issues" | "overall_summary" | "improvement_suggestions" | "improvement_focus";
-
-interface QMeta {
-  label: string;
-  scaleLabel: string;
-  min: number;
-  max: number;
-}
-
-const Q_META: Record<QKey, QMeta> = {
-  q1_teaching_methodology:    { label: "Q1 — Teaching Methodology",      scaleLabel: "Likert 1-5",    min: 1, max: 5 },
-  q2_curriculum_alignment:    { label: "Q2 — Curriculum Alignment",      scaleLabel: "Likert 1-5",    min: 1, max: 5 },
-  q3_student_interactivity:   { label: "Q3 — Student Interactivity",     scaleLabel: "Frequency 0-3", min: 0, max: 3 },
-  q4_differentiated_teaching: { label: "Q4 — Differentiated Teaching",   scaleLabel: "Likert 1-5",    min: 1, max: 5 },
-  q5_psychological_safety:    { label: "Q5 — Psychological Safety",      scaleLabel: "Likert 1-5",    min: 1, max: 5 },
-  q6_rapport_session_opening: { label: "Q6 — Rapport & Session Opening", scaleLabel: "Binary 0 or 1", min: 0, max: 1 },
-  q7_technical_quality:       { label: "Q7 — Technical Quality",         scaleLabel: "Likert 1-5",    min: 1, max: 5 },
-  q8_formative_assessment:    { label: "Q8 — Formative Assessment",      scaleLabel: "Frequency 0-3", min: 0, max: 3 },
-};
-
-const Q_KEYS: QKey[] = [
-  "q1_teaching_methodology",
-  "q2_curriculum_alignment",
-  "q3_student_interactivity",
-  "q4_differentiated_teaching",
-  "q5_psychological_safety",
-  "q6_rapport_session_opening",
-  "q7_technical_quality",
-  "q8_formative_assessment",
-];
 
 const ALL_KEYS: (QKey | OtherKey)[] = [
   ...Q_KEYS,
@@ -65,31 +34,6 @@ const ALL_KEYS: (QKey | OtherKey)[] = [
 ];
 
 type FieldState = "untouched" | "accepted" | "edited";
-
-// Per-question color based on score ratio
-function scoreColor(score: number, max: number): string {
-  const ratio = max === 0 ? 0 : score / max;
-  if (ratio >= 0.8) return "#30D158"; // green
-  if (ratio >= 0.5) return "#FF9F0A"; // amber
-  return "#E24B4A"; // red
-}
-
-// Interpretation bands for the 32-point scorecard (5+5+3+5+5+1+5+3 = 32).
-function interpretationBadge(total: number): { label: string; bg: string; fg: string } {
-  if (total >= 28) return { label: "Excellent", bg: "#E8F5E9", fg: "#1B5E20" };
-  if (total >= 22) return { label: "Good", bg: "#E3F2FD", fg: "#0D47A1" };
-  if (total >= 15) return { label: "Below Standard", bg: "#FFF8E1", fg: "#8B6914" };
-  return { label: "Significant Concerns", bg: "#FFEBEE", fg: "#B71C1C" };
-}
-
-// Map total_score → demo.analystRating (1-5), proportional to the interpretation bands.
-function totalToAnalystRating(total: number): number {
-  if (total >= 28) return 5;
-  if (total >= 22) return 4;
-  if (total >= 15) return 3;
-  if (total >= 8) return 2;
-  return 1;
-}
 
 // ─── Component ────────────────────────────────────────────────
 

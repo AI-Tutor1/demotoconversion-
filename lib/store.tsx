@@ -523,14 +523,31 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   );
 
   const notifications = useMemo(() => {
-    return demos
+    // Pending demos aged 3+ days — positive IDs = demo.id
+    const pending: Notification[] = demos
       .filter((d) => d.status === "Pending" && ageDays(d.ts) >= 3)
       .map((d) => ({
         id: d.id,
         text: `${d.student} pending ${ageDays(d.ts)} days`,
         time: `${ageDays(d.ts)}d`,
       }));
-  }, [demos]);
+
+    // AI drafts awaiting review — negative IDs to avoid collision with
+    // demo.id (Date.now() ms ~1.7e12; negatives are out of that range).
+    const demoById = new Map(demos.map((d) => [d.id, d]));
+    const draftReady: Notification[] = drafts
+      .filter((d) => d.status === "pending_review")
+      .map((d) => {
+        const demo = demoById.get(d.demo_id);
+        return {
+          id: -d.demo_id,
+          text: `AI draft ready: ${demo?.student ?? `Demo ${d.demo_id}`}`,
+          time: "Review",
+        };
+      });
+
+    return [...draftReady, ...pending];
+  }, [demos, drafts]);
 
   const stats = useMemo(() => {
     const ds = rangedDemos;
