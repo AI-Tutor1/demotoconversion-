@@ -459,3 +459,32 @@ Captured at Phase 3 kickoff so these don't need to be re-derived. All decisions 
 - Step 4 — seed a transcript into `demos.transcript` for testing
 - Step 5 — frontend split-view draft-review UI + Realtime subscribe to `demo_drafts`
 - Step 6 — full-loop test (transcript → agent → draft → review → approve)
+
+---
+
+## Part 13: Phase 3 Completion Record (Demo Analyst Agent)
+
+**Date:** April 2026
+**Status:** Steps 1-5 complete · pipeline verified at the data layer · live browser walkthrough is Step 6
+**Tag:** `v3.0-phase3-demo-analyst`
+
+### What was delivered:
+- Python FastAPI backend (`backend/`) with LangGraph orchestration on Python 3.12 venv; Dockerfile ready for Railway
+- Demo Analyst agent: Claude Sonnet, async (`ainvoke`), JSON parse + retry that re-sends the FULL conversation history (system prompt + transcript + Claude's broken response + correction), token aggregation across both attempts
+- POST /api/v1/demos/{id}/analyze with 60s timeout and structured error taxonomy: 404 missing demo, 400 missing transcript, 502 LLM/JSON-parse error, 504 timeout, 500 unexpected; every recoverable failure marks task_queue.status=failed with the error message
+- Frontend split-view review UI at /analyst/[id]: per-field Accept ✓ / Edit ✐ state machine with green/amber left-border indicators, Accept All, Reject path that pre-fills the analyst form via query params
+- Realtime subscription on `demo_drafts` so the analyst sees the AI draft appear as soon as the backend writes it
+- Pipeline closures: analyst form populates `analystId`, round-robin auto-assigns to the sales agent with the lowest current load, transcript textarea, manager unassigned-sales banner
+- Store extracted to `lib/supabase-sync.ts` (`createSupabaseSync` factory) for cleaner separation; store.tsx shed ~170 lines
+
+### Bugs found and fixed during Phase 3:
+- **BUG-014: pip resolver conflict** — original spec `langgraph==0.2.0` + `langchain-core==0.3.0` was unsolvable (langgraph 0.2.0 pins core <0.3). First bump to `langgraph==0.2.60` failed too because that version excludes core 0.3.0–0.3.22. Resolved by relaxing the langchain trio to ranges; pip resolved to `langgraph 0.2.76` + `langchain-core 0.3.84` + `langchain-anthropic 0.3.0`.
+- **BUG-015: AnalysisResponse field name mismatch** — backend returned `draft_id`, frontend cast to `DemoDraft` which expects `id`. Caused `id: undefined` in local state, breaking approveDraft/rejectDraft. Renamed backend field to `id` so the response shape matches `DemoDraft` and the DB row shape from `demo_drafts.select('*')`.
+- **BUG-016: CSS shorthand override** — `borderLeft` set before `border` in inline-style object meant React serialized them in that order, and the `border` shorthand wiped out the `borderLeft` accept/edit color indicator. Visible result: every card was uniform 1px gray. Fix: put `border` first, `borderLeft` second.
+- **BUG-017: end-to-end pipeline gaps** — pipeline-completeness audit caught 6 holes: `analystId` field missing from Demo type, no auto-assignment to sales agent on submit, no transcript field on the analyst form, etc. Fixed in one pass.
+
+### Phase 4 readiness:
+- `demo_drafts.approval_rate` tracking ready for AI quality-drift detection
+- `task_queue.input_tokens` / `output_tokens` / `duration_ms` ready for cost dashboards
+- Five remaining agent prompts already in CONTEXT.md (Ingest, Router, Sales Coach, Classifier, Teacher Coach)
+- `backend/agents/` pattern proven — adding the next agent = one new module + one new endpoint route
