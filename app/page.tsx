@@ -1,13 +1,39 @@
 "use client";
 
+import { useState } from "react";
 import { useStore } from "@/lib/store";
 import { StatusBadge } from "@/components/ui";
 import { initials } from "@/lib/utils";
 import { NEAR_BLACK, LIGHT_GRAY, MUTED, BLUE } from "@/lib/types";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 
 export default function DashboardPage() {
-  const { stats, rangedDemos, activity, dateRange, user } = useStore();
+  const router = useRouter();
+  const {
+    stats,
+    rangedDemos,
+    activity,
+    dateRange,
+    user,
+    draftsByDemoId,
+    triggerAnalyze,
+    flash,
+  } = useStore();
+  const [analyzingId, setAnalyzingId] = useState<number | null>(null);
+
+  const canAnalyze = user?.role === "analyst" || user?.role === "manager";
+
+  const onAnalyze = async (demoId: number) => {
+    setAnalyzingId(demoId);
+    const res = await triggerAnalyze(demoId);
+    setAnalyzingId(null);
+    if (!res.ok) {
+      flash(res.error);
+      return;
+    }
+    router.push(`/analyst/${demoId}`);
+  };
 
   const emptyMessage =
     user?.role === "sales_agent"
@@ -67,20 +93,50 @@ export default function DashboardPage() {
                 {emptyMessage}
               </div>
             )}
-            {rangedDemos.slice(0, 6).map((d) => (
-              <div key={d.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 0", borderBottom: "1px solid #f0f0f0", gap: 8, flexWrap: "wrap" }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                  <div style={{ width: 32, height: 32, borderRadius: "50%", background: LIGHT_GRAY, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 600 }}>
-                    {initials(d.student)}
+            {rangedDemos.slice(0, 6).map((d) => {
+              const draft = draftsByDemoId[d.id];
+              const hasTranscript = !!(d.transcript && d.transcript.trim());
+              return (
+                <div key={d.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 0", borderBottom: "1px solid #f0f0f0", gap: 8, flexWrap: "wrap" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                    <div style={{ width: 32, height: 32, borderRadius: "50%", background: LIGHT_GRAY, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 600 }}>
+                      {initials(d.student)}
+                    </div>
+                    <div>
+                      <div style={{ fontSize: 14, fontWeight: 500 }}>{d.student}</div>
+                      <div style={{ fontSize: 11, color: MUTED }}>{d.teacher} · {d.subject} · {d.date}</div>
+                    </div>
                   </div>
-                  <div>
-                    <div style={{ fontSize: 14, fontWeight: 500 }}>{d.student}</div>
-                    <div style={{ fontSize: 11, color: MUTED }}>{d.teacher} · {d.subject} · {d.date}</div>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    {canAnalyze && hasTranscript && draft && draft.status === "pending_review" && (
+                      <Link
+                        href={`/analyst/${d.id}`}
+                        className="pill pill-outline"
+                        style={{ padding: "4px 12px", fontSize: 12 }}
+                      >
+                        Review draft
+                      </Link>
+                    )}
+                    {canAnalyze && hasTranscript && !draft && (
+                      <button
+                        onClick={() => onAnalyze(d.id)}
+                        disabled={analyzingId === d.id}
+                        className="pill pill-outline"
+                        style={{
+                          padding: "4px 12px",
+                          fontSize: 12,
+                          opacity: analyzingId === d.id ? 0.6 : 1,
+                          cursor: analyzingId === d.id ? "default" : "pointer",
+                        }}
+                      >
+                        {analyzingId === d.id ? "Analyzing…" : "Analyze"}
+                      </button>
+                    )}
+                    <StatusBadge status={d.status} />
                   </div>
                 </div>
-                <StatusBadge status={d.status} />
-              </div>
-            ))}
+              );
+            })}
           </div>
           <div>
             <h2 style={{ fontSize: 24, fontWeight: 600, marginBottom: 16 }}>Activity log</h2>

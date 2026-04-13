@@ -10,17 +10,19 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { Demo, ActivityEntry, Notification } from "./types";
+
+import {
+  Demo,
+  ActivityEntry,
+  Notification,
+  DemoDraft,
+  DemoDraftStatus,
+} from "./types";
 import { SEED_ACTIVITY } from "./data";
 import { inDateRange, ageDays } from "./utils";
 import { supabase } from "./supabase";
-import {
-  dbRowToDemo,
-  demoToInsertRow,
-  demoUpdatesToDb,
-  pourToDbRows,
-  type DemoRow,
-} from "./transforms";
+import { dbRowToDemo, type DemoRow } from "./transforms";
+import { createSupabaseSync } from "./supabase-sync";
 
 export interface UserProfile {
   id: string;
@@ -28,6 +30,10 @@ export interface UserProfile {
   role: "analyst" | "sales_agent" | "manager";
   full_name: string;
 }
+
+export type AnalyzeResult =
+  | { ok: true; draft: DemoDraft }
+  | { ok: false; error: string };
 
 interface StoreContextType {
   demos: Demo[];
@@ -47,6 +53,16 @@ interface StoreContextType {
   loading: boolean;
   user: UserProfile | null;
   salesAgents: UserProfile[];
+  drafts: DemoDraft[];
+  draftsByDemoId: Record<number, DemoDraft | undefined>;
+  fetchDraft: (demoId: number) => Promise<DemoDraft | null>;
+  triggerAnalyze: (demoId: number) => Promise<AnalyzeResult>;
+  approveDraft: (
+    draftId: string,
+    approvalRate: number,
+    status: Extract<DemoDraftStatus, "approved" | "partially_edited">
+  ) => Promise<void>;
+  rejectDraft: (draftId: string) => Promise<void>;
   stats: {
     total: number;
     converted: number;
@@ -60,26 +76,8 @@ interface StoreContextType {
 
 const StoreContext = createContext<StoreContextType | null>(null);
 
-// Short-TTL write dedupe to absorb React Strict Mode double-invocation of
-// state updater functions in dev. Production runs once; dev fires twice and
-// the second fire short-circuits here.
-const DEDUPE_WINDOW_MS = 1500;
-
-// Compute per-row diff excluding `pour` (handled separately).
-function diffDemoFields(prev: Demo, next: Demo): Partial<Demo> {
-  const diff: Partial<Demo> = {};
-  (Object.keys(next) as (keyof Demo)[]).forEach((key) => {
-    if (key === "pour") return;
-    if (JSON.stringify(prev[key]) !== JSON.stringify(next[key])) {
-      (diff as Record<string, unknown>)[key] = next[key];
-    }
-  });
-  return diff;
-}
-
-function pourChanged(prev: Demo, next: Demo): boolean {
-  return JSON.stringify(prev.pour) !== JSON.stringify(next.pour);
-}
+const AI_BACKEND_URL =
+  process.env.NEXT_PUBLIC_AI_BACKEND_URL ?? "http://localhost:8000";
 
 export function StoreProvider({ children }: { children: ReactNode }) {
   const [demos, setDemosRaw] = useState<Demo[]>([]);
@@ -90,9 +88,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const [activity, setActivity] = useState<ActivityEntry[]>(SEED_ACTIVITY);
   const [user, setUser] = useState<UserProfile | null>(null);
   const [salesAgents, setSalesAgents] = useState<UserProfile[]>([]);
+  const [drafts, setDrafts] = useState<DemoDraft[]>([]);
 
-  const writeHashes = useRef<Map<string, number>>(new Map());
   const processedRealtimeIds = useRef<Set<number>>(new Set());
+  const processedRealtimeDraftIds = useRef<Set<string>>(new Set());
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const flash = useCallback((msg: string) => {
@@ -113,156 +112,14 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     []
   );
 
-  // ─── Dedupe helper (prevents Strict-Mode double writes) ───────
-  const shouldFire = useCallback((hash: string): boolean => {
-    const now = Date.now();
-    const last = writeHashes.current.get(hash);
-    if (last !== undefined && now - last < DEDUPE_WINDOW_MS) return false;
-    writeHashes.current.set(hash, now);
-    // GC old entries
-    for (const [k, t] of writeHashes.current.entries()) {
-      if (now - t > DEDUPE_WINDOW_MS * 2) writeHashes.current.delete(k);
-    }
-    return true;
-  }, []);
-
-  // ─── Async write helpers ──────────────────────────────────────
-  const fireInsert = useCallback(
-    async (demo: Demo) => {
-      const hash = `insert:${demo.id}`;
-      if (!shouldFire(hash)) return;
-      const { error: demoErr } = await supabase
-        .from("demos")
-        .insert(demoToInsertRow(demo));
-      if (demoErr) {
-        flash(`Save failed: ${demoErr.message}`);
-        setDemosRaw((prev) => prev.filter((d) => d.id !== demo.id));
-        return;
-      }
-      if (demo.pour.length > 0) {
-        const { error: pourErr } = await supabase
-          .from("pour_issues")
-          .insert(pourToDbRows(demo.id, demo.pour));
-        if (pourErr) flash(`POUR save failed: ${pourErr.message}`);
-      }
-    },
-    [flash, shouldFire]
+  // Sync machinery extracted to lib/supabase-sync.ts. Stable identity across
+  // renders because deps (`setDemosRaw`, `flash`) are themselves stable.
+  const syncApi = useMemo(
+    () => createSupabaseSync({ setDemosRaw, flash }),
+    [flash]
   );
 
-  const fireUpdateGroup = useCallback(
-    async (ids: number[], changes: Partial<Demo>, prevSnapshot: Demo[]) => {
-      const hash = `update:${ids.slice().sort().join(",")}:${JSON.stringify(
-        changes
-      )}`;
-      if (!shouldFire(hash)) return;
-      const payload = demoUpdatesToDb(changes);
-      if (Object.keys(payload).length === 0) return;
-      const query = supabase.from("demos").update(payload);
-      const { error } =
-        ids.length === 1
-          ? await query.eq("id", ids[0])
-          : await query.in("id", ids);
-      if (error) {
-        flash(`Save failed: ${error.message}`);
-        const prevById = new Map(prevSnapshot.map((d) => [d.id, d]));
-        setDemosRaw((cur) =>
-          cur.map((d) => {
-            if (!ids.includes(d.id)) return d;
-            const original = prevById.get(d.id);
-            return original ?? d;
-          })
-        );
-      }
-    },
-    [flash, shouldFire]
-  );
-
-  const firePourSync = useCallback(
-    async (demoId: number, nextPour: Demo["pour"], prevSnapshot: Demo[]) => {
-      const hash = `pour:${demoId}:${JSON.stringify(nextPour)}`;
-      if (!shouldFire(hash)) return;
-      const { error: delErr } = await supabase
-        .from("pour_issues")
-        .delete()
-        .eq("demo_id", demoId);
-      if (delErr) {
-        flash(`POUR update failed: ${delErr.message}`);
-        const prev = prevSnapshot.find((d) => d.id === demoId);
-        if (prev) setDemosRaw((cur) => cur.map((d) => (d.id === demoId ? prev : d)));
-        return;
-      }
-      if (nextPour.length > 0) {
-        const { error: insErr } = await supabase
-          .from("pour_issues")
-          .insert(pourToDbRows(demoId, nextPour));
-        if (insErr) flash(`POUR insert failed: ${insErr.message}`);
-      }
-    },
-    [flash, shouldFire]
-  );
-
-  const fireDelete = useCallback(
-    async (demoId: number, prevSnapshot: Demo[]) => {
-      const hash = `delete:${demoId}`;
-      if (!shouldFire(hash)) return;
-      const { error } = await supabase.from("demos").delete().eq("id", demoId);
-      if (error) {
-        flash(`Delete failed: ${error.message}`);
-        const original = prevSnapshot.find((d) => d.id === demoId);
-        if (original) setDemosRaw((cur) => [original, ...cur]);
-      }
-    },
-    [flash, shouldFire]
-  );
-
-  // ─── Diff prev vs next, dispatch async writes (with batching) ──
-  const syncChanges = useCallback(
-    (prev: Demo[], next: Demo[]) => {
-      if (prev === next) return;
-      const prevById = new Map(prev.map((d) => [d.id, d]));
-      const nextById = new Map(next.map((d) => [d.id, d]));
-
-      // INSERTs
-      for (const [id, nextDemo] of nextById) {
-        if (!prevById.has(id)) fireInsert(nextDemo);
-      }
-
-      // UPDATEs — group by identical field-diff for bulk batching
-      const groups = new Map<
-        string,
-        { ids: number[]; changes: Partial<Demo> }
-      >();
-      const pourEdits: { id: number; pour: Demo["pour"] }[] = [];
-      for (const [id, nextDemo] of nextById) {
-        const prevDemo = prevById.get(id);
-        if (!prevDemo) continue;
-        if (prevDemo === nextDemo) continue;
-        const fieldDiff = diffDemoFields(prevDemo, nextDemo);
-        if (Object.keys(fieldDiff).length > 0) {
-          const sig = JSON.stringify(fieldDiff);
-          if (!groups.has(sig)) groups.set(sig, { ids: [], changes: fieldDiff });
-          groups.get(sig)!.ids.push(id);
-        }
-        if (pourChanged(prevDemo, nextDemo)) {
-          pourEdits.push({ id, pour: nextDemo.pour });
-        }
-      }
-      for (const { ids, changes } of groups.values()) {
-        fireUpdateGroup(ids, changes, prev);
-      }
-      for (const { id, pour } of pourEdits) {
-        firePourSync(id, pour, prev);
-      }
-
-      // DELETEs
-      for (const id of prevById.keys()) {
-        if (!nextById.has(id)) fireDelete(id, prev);
-      }
-    },
-    [fireInsert, fireUpdateGroup, firePourSync, fireDelete]
-  );
-
-  // Wrapped setDemos exposed to pages — keeps same signature, adds sync.
+  // Wrapped setDemos exposed to pages — same signature as useState setter.
   const setDemos: React.Dispatch<React.SetStateAction<Demo[]>> = useCallback(
     (arg) => {
       setDemosRaw((prev) => {
@@ -270,11 +127,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           typeof arg === "function"
             ? (arg as (p: Demo[]) => Demo[])(prev)
             : arg;
-        syncChanges(prev, next);
+        syncApi.syncChanges(prev, next);
         return next;
       });
     },
-    [syncChanges]
+    [syncApi]
   );
 
   // ─── Initial fetch + auth-change re-fetch ─────────────────────
@@ -292,6 +149,20 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     }
     setLoading(false);
   }, [flash]);
+
+  const fetchDrafts = useCallback(async () => {
+    const { data, error } = await supabase
+      .from("demo_drafts")
+      .select("*")
+      .order("created_at", { ascending: false })
+      .limit(200);
+    if (error) {
+      // Non-fatal — drafts may not be relevant to every role
+      setDrafts([]);
+      return;
+    }
+    setDrafts((data as DemoDraft[] | null) ?? []);
+  }, []);
 
   const syncUserProfile = useCallback(async () => {
     const {
@@ -323,17 +194,19 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       ) {
         fetchDemos();
         syncUserProfile();
+        fetchDrafts();
       } else if (event === "SIGNED_OUT") {
         setDemosRaw([]);
         setUser(null);
         setSalesAgents([]);
+        setDrafts([]);
         setLoading(false);
       }
     });
     return () => {
       data.subscription.unsubscribe();
     };
-  }, [fetchDemos, syncUserProfile]);
+  }, [fetchDemos, syncUserProfile, fetchDrafts]);
 
   // Flash reader for middleware route-denied redirects (?denied=<prefix>)
   useEffect(() => {
@@ -347,7 +220,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     window.history.replaceState({}, "", url.toString());
   }, [flash]);
 
-  // ─── Realtime subscription (bypasses wrapped setDemos) ────────
+  // ─── Realtime: demos + pour_issues (bypasses wrapped setDemos) ───
   useEffect(() => {
     const channel = supabase
       .channel("demos-sync")
@@ -355,14 +228,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         "postgres_changes",
         { event: "INSERT", schema: "public", table: "demos" },
         async (payload) => {
-          const newId = Number(
-            (payload.new as unknown as { id: number }).id
-          );
-          // Defense-in-depth dedup: if we've already processed this id
-          // (optimistic insert or a prior realtime echo), drop the event.
+          const newId = Number((payload.new as unknown as { id: number }).id);
           if (processedRealtimeIds.current.has(newId)) return;
           processedRealtimeIds.current.add(newId);
-          // GC the set periodically so it doesn't grow unbounded
           if (processedRealtimeIds.current.size > 500) {
             processedRealtimeIds.current = new Set(
               Array.from(processedRealtimeIds.current).slice(-250)
@@ -387,9 +255,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         "postgres_changes",
         { event: "UPDATE", schema: "public", table: "demos" },
         async (payload) => {
-          const newId = Number(
-            (payload.new as unknown as { id: number }).id
-          );
+          const newId = Number((payload.new as unknown as { id: number }).id);
           const { data: pours } = await supabase
             .from("pour_issues")
             .select("category, description")
@@ -446,7 +312,154 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     };
   }, []);
 
-  // ─── Derived memos (unchanged from Phase 1) ───────────────────
+  // ─── Realtime: demo_drafts ────────────────────────────────────
+  useEffect(() => {
+    const channel = supabase
+      .channel("drafts-sync")
+      .on(
+        "postgres_changes",
+        { event: "INSERT", schema: "public", table: "demo_drafts" },
+        (payload) => {
+          const row = payload.new as unknown as DemoDraft;
+          if (processedRealtimeDraftIds.current.has(row.id)) return;
+          processedRealtimeDraftIds.current.add(row.id);
+          if (processedRealtimeDraftIds.current.size > 500) {
+            processedRealtimeDraftIds.current = new Set(
+              Array.from(processedRealtimeDraftIds.current).slice(-250)
+            );
+          }
+          setDrafts((prev) =>
+            prev.some((d) => d.id === row.id) ? prev : [row, ...prev]
+          );
+        }
+      )
+      .on(
+        "postgres_changes",
+        { event: "UPDATE", schema: "public", table: "demo_drafts" },
+        (payload) => {
+          const row = payload.new as unknown as DemoDraft;
+          setDrafts((prev) =>
+            prev.map((d) => (d.id === row.id ? row : d))
+          );
+        }
+      )
+      .on(
+        "postgres_changes",
+        { event: "DELETE", schema: "public", table: "demo_drafts" },
+        (payload) => {
+          const oldId = (payload.old as unknown as { id: string }).id;
+          setDrafts((prev) => prev.filter((d) => d.id !== oldId));
+        }
+      )
+      .subscribe();
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, []);
+
+  // ─── Draft operations ─────────────────────────────────────────
+  const fetchDraft = useCallback(
+    async (demoId: number): Promise<DemoDraft | null> => {
+      const { data, error } = await supabase
+        .from("demo_drafts")
+        .select("*")
+        .eq("demo_id", demoId)
+        .order("created_at", { ascending: false })
+        .limit(1);
+      if (error || !data || data.length === 0) return null;
+      const latest = data[0] as DemoDraft;
+      // Merge into local cache if absent
+      setDrafts((prev) =>
+        prev.some((d) => d.id === latest.id) ? prev : [latest, ...prev]
+      );
+      return latest;
+    },
+    []
+  );
+
+  const triggerAnalyze = useCallback(
+    async (demoId: number): Promise<AnalyzeResult> => {
+      try {
+        const res = await fetch(
+          `${AI_BACKEND_URL}/api/v1/demos/${demoId}/analyze`,
+          { method: "POST" }
+        );
+        if (!res.ok) {
+          let detail = `HTTP ${res.status}`;
+          try {
+            const body = await res.json();
+            if (body?.detail) detail = String(body.detail);
+          } catch {
+            /* response not JSON */
+          }
+          return { ok: false, error: detail };
+        }
+        const draft = (await res.json()) as DemoDraft;
+        // Optimistically inject so the review page finds it even before realtime fires
+        setDrafts((prev) =>
+          prev.some((d) => d.id === draft.id) ? prev : [draft, ...prev]
+        );
+        return { ok: true, draft };
+      } catch (err) {
+        return {
+          ok: false,
+          error:
+            err instanceof Error
+              ? err.message
+              : "AI backend not reachable (is the Python server running on :8000?)",
+        };
+      }
+    },
+    []
+  );
+
+  const approveDraft = useCallback(
+    async (
+      draftId: string,
+      approvalRate: number,
+      status: Extract<DemoDraftStatus, "approved" | "partially_edited">
+    ): Promise<void> => {
+      const {
+        data: { user: authUser },
+      } = await supabase.auth.getUser();
+      const { error } = await supabase
+        .from("demo_drafts")
+        .update({
+          status,
+          approval_rate: approvalRate,
+          reviewed_by: authUser?.id ?? null,
+          reviewed_at: new Date().toISOString(),
+        })
+        .eq("id", draftId);
+      if (error) {
+        flash(`Failed to update draft: ${error.message}`);
+      }
+    },
+    [flash]
+  );
+
+  const rejectDraft = useCallback(
+    async (draftId: string): Promise<void> => {
+      const {
+        data: { user: authUser },
+      } = await supabase.auth.getUser();
+      const { error } = await supabase
+        .from("demo_drafts")
+        .update({
+          status: "rejected" as const,
+          approval_rate: 0,
+          reviewed_by: authUser?.id ?? null,
+          reviewed_at: new Date().toISOString(),
+        })
+        .eq("id", draftId);
+      if (error) {
+        flash(`Failed to reject draft: ${error.message}`);
+      }
+    },
+    [flash]
+  );
+
+  // ─── Derived memos ────────────────────────────────────────────
   const rangedDemos = useMemo(
     () => demos.filter((d) => inDateRange(d.date, dateRange)),
     [demos, dateRange]
@@ -484,6 +497,16 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     };
   }, [rangedDemos]);
 
+  // Latest draft per demo_id — O(1) lookup for the UI
+  const draftsByDemoId = useMemo(() => {
+    const m: Record<number, DemoDraft | undefined> = {};
+    for (const d of drafts) {
+      const existing = m[d.demo_id];
+      if (!existing || d.created_at > existing.created_at) m[d.demo_id] = d;
+    }
+    return m;
+  }, [drafts]);
+
   return (
     <StoreContext.Provider
       value={{
@@ -502,6 +525,12 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         loading,
         user,
         salesAgents,
+        drafts,
+        draftsByDemoId,
+        fetchDraft,
+        triggerAnalyze,
+        approveDraft,
+        rejectDraft,
         stats,
       }}
     >

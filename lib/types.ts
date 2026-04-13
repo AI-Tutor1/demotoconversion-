@@ -32,6 +32,9 @@ export interface Demo {
   review: string;
   methodology?: string;
   engagement?: string;
+  topicReview: string;
+  resourcesReview: string;
+  effectivenessReview: string;
   studentRaw: number;
   analystRating: number;
   status: "Pending" | "Converted" | "Not Converted";
@@ -43,10 +46,44 @@ export interface Demo {
   acctType: string;
   link: string;
   recording: string;
+  transcript: string | null;
   marketing: boolean;
   ts: number;
   workflowStage: WorkflowStage;
   salesAgentId: string | null;
+}
+
+// AI-generated draft output stored in the demo_drafts table.
+// The shape of draft_data mirrors the Python agent's JSON output exactly
+// (snake_case), so the JSONB column and this type are the same shape.
+export interface DraftData {
+  pour_issues: { category: string; description: string }[];
+  methodology: string;
+  topic: string;
+  resources: string;
+  engagement: string;
+  effectiveness: string;
+  suggested_rating: number;
+  suggestions: string;
+  improvement_focus: string;
+}
+
+export type DemoDraftStatus =
+  | "pending_review"
+  | "approved"
+  | "partially_edited"
+  | "rejected";
+
+export interface DemoDraft {
+  id: string;
+  demo_id: number;
+  agent_name: string;
+  draft_data: DraftData;
+  status: DemoDraftStatus;
+  approval_rate: number | null;
+  reviewed_by: string | null;
+  reviewed_at: string | null;
+  created_at: string;
 }
 
 export interface ActivityEntry {

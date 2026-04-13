@@ -25,6 +25,9 @@ export type DemoRow = {
   acct_type: string;
   link: string;
   recording: string;
+  topic_review: string;
+  resources_review: string;
+  effectiveness_review: string;
   marketing: boolean;
   ts: number;
   analyst_id: string | null;
@@ -77,6 +80,10 @@ export function dbRowToDemo(row: DemoRow): Demo {
     acctType: row.acct_type,
     link: row.link,
     recording: row.recording ?? "",
+    transcript: row.transcript ?? null,
+    topicReview: row.topic_review ?? "",
+    resourcesReview: row.resources_review ?? "",
+    effectivenessReview: row.effectiveness_review ?? "",
     marketing: row.marketing,
     ts: Number(row.ts),
     workflowStage: (row.workflow_stage as WorkflowStage) ?? "new",
@@ -115,6 +122,9 @@ export function demoToInsertRow(d: Demo): Record<string, unknown> {
     acct_type: d.acctType,
     link: d.link,
     recording: d.recording ?? "",
+    topic_review: d.topicReview ?? "",
+    resources_review: d.resourcesReview ?? "",
+    effectiveness_review: d.effectivenessReview ?? "",
     marketing: d.marketing,
     ts: d.ts,
     workflow_stage: d.workflowStage ?? statusToStage(d.status),
@@ -153,6 +163,9 @@ export function demoUpdatesToDb(partial: Partial<Demo>): Record<string, unknown>
   if ("acctType" in partial) out.acct_type = partial.acctType;
   if ("link" in partial) out.link = partial.link;
   if ("recording" in partial) out.recording = partial.recording ?? "";
+  if ("topicReview" in partial) out.topic_review = partial.topicReview ?? "";
+  if ("resourcesReview" in partial) out.resources_review = partial.resourcesReview ?? "";
+  if ("effectivenessReview" in partial) out.effectiveness_review = partial.effectivenessReview ?? "";
   if ("marketing" in partial) out.marketing = partial.marketing;
   if ("ts" in partial) out.ts = partial.ts;
   if ("salesAgentId" in partial) out.sales_agent_id = partial.salesAgentId ?? null;

@@ -1,14 +1,40 @@
 "use client";
 
-import { useState } from "react";
+import { Suspense, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { useStore } from "@/lib/store";
 import { Field, Stars, SectionHeader } from "@/components/ui";
 import { TEACHERS, LEVELS, SUBJECTS, POUR_CATS, LIGHT_GRAY, MUTED, BLUE } from "@/lib/types";
 import { formatMonth } from "@/lib/utils";
 
 export default function AnalystPage() {
+  // useSearchParams() needs a Suspense boundary in Next.js 15 client components.
+  return (
+    <Suspense fallback={null}>
+      <AnalystForm />
+    </Suspense>
+  );
+}
+
+function AnalystForm() {
   const { setDemos, flash, logActivity } = useStore();
-  const blank = { date: new Date().toISOString().split("T")[0], teacher: "", student: "", level: "", subject: "", pour: {} as Record<string, string>, methodology: "", suggestions: "", improvement: "", recording: "", studentRaw: 7, analystRating: 0 };
+  // Query-param prefill — used by the "Reject AI draft" flow so the analyst
+  // can rewrite the review from scratch with the demo metadata already filled in.
+  const params = useSearchParams();
+  const blank = {
+    date: new Date().toISOString().split("T")[0],
+    teacher: params.get("teacher") ?? "",
+    student: params.get("student") ?? "",
+    level: params.get("level") ?? "",
+    subject: params.get("subject") ?? "",
+    pour: {} as Record<string, string>,
+    methodology: "",
+    suggestions: "",
+    improvement: "",
+    recording: "",
+    studentRaw: 7,
+    analystRating: 0,
+  };
   const [f, setF] = useState(blank);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [submitting, setSubmitting] = useState(false);
@@ -61,7 +87,9 @@ export default function AnalystPage() {
       review: f.methodology, studentRaw: f.studentRaw, analystRating: f.analystRating,
       status: "Pending" as const, suggestions: f.suggestions, improvement: f.improvement,
       agent: "", comments: "", verbatim: "", acctType: "", link: "",
-      recording: f.recording, marketing: false, ts: now,
+      recording: f.recording, transcript: null,
+      topicReview: "", resourcesReview: "", effectivenessReview: "",
+      marketing: false, ts: now,
       workflowStage: "pending_sales" as const, salesAgentId: null,
     };
     setDemos((p) => [newDemo, ...p]);
