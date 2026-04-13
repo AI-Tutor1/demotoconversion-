@@ -288,8 +288,8 @@ export default function DraftReview({
             style={{
               background: "#fff",
               borderRadius: 12,
-              borderLeft: borderFor("pour_issues"),
               border: "1px solid #e8e8ed",
+              borderLeft: borderFor("pour_issues"),
               padding: "14px 18px",
               transition: "all 0.15s",
             }}
@@ -398,8 +398,8 @@ export default function DraftReview({
               style={{
                 background: "#fff",
                 borderRadius: 12,
-                borderLeft: borderFor(k),
                 border: "1px solid #e8e8ed",
+                borderLeft: borderFor(k),
                 padding: "14px 18px",
                 transition: "all 0.15s",
               }}
@@ -425,8 +425,8 @@ export default function DraftReview({
             style={{
               background: "#fff",
               borderRadius: 12,
-              borderLeft: borderFor("suggested_rating"),
               border: "1px solid #e8e8ed",
+              borderLeft: borderFor("suggested_rating"),
               padding: "14px 18px",
               transition: "all 0.15s",
             }}
