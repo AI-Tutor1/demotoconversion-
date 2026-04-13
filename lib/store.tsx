@@ -35,6 +35,17 @@ export type AnalyzeResult =
   | { ok: true; draft: DemoDraft }
   | { ok: false; error: string };
 
+export type ProcessRecordingResult =
+  | {
+      ok: true;
+      demoId: number;
+      transcriptLength: number;
+      durationSeconds: number;
+      analysisDraftId: string | null;
+      status: "transcribed_and_analyzed" | "transcription_only";
+    }
+  | { ok: false; error: string };
+
 interface StoreContextType {
   demos: Demo[];
   setDemos: React.Dispatch<React.SetStateAction<Demo[]>>;
@@ -57,6 +68,7 @@ interface StoreContextType {
   draftsByDemoId: Record<number, DemoDraft | undefined>;
   fetchDraft: (demoId: number) => Promise<DemoDraft | null>;
   triggerAnalyze: (demoId: number) => Promise<AnalyzeResult>;
+  triggerProcessRecording: (demoId: number) => Promise<ProcessRecordingResult>;
   approveDraft: (
     draftId: string,
     approvalRate: number,
@@ -413,6 +425,51 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     []
   );
 
+  const triggerProcessRecording = useCallback(
+    async (demoId: number): Promise<ProcessRecordingResult> => {
+      try {
+        const res = await fetch(
+          `${AI_BACKEND_URL}/api/v1/demos/${demoId}/process-recording`,
+          { method: "POST" }
+        );
+        if (!res.ok) {
+          let detail = `HTTP ${res.status}`;
+          try {
+            const body = await res.json();
+            if (body?.detail) detail = String(body.detail);
+          } catch {
+            /* non-JSON body */
+          }
+          return { ok: false, error: detail };
+        }
+        const body = (await res.json()) as {
+          demo_id: number;
+          transcript_length: number;
+          duration_seconds: number;
+          analysis_draft_id: string | null;
+          status: "transcribed_and_analyzed" | "transcription_only";
+        };
+        return {
+          ok: true,
+          demoId: body.demo_id,
+          transcriptLength: body.transcript_length,
+          durationSeconds: body.duration_seconds,
+          analysisDraftId: body.analysis_draft_id,
+          status: body.status,
+        };
+      } catch (err) {
+        return {
+          ok: false,
+          error:
+            err instanceof Error
+              ? err.message
+              : "AI backend not reachable (is the Python server running on :8000?)",
+        };
+      }
+    },
+    []
+  );
+
   const approveDraft = useCallback(
     async (
       draftId: string,
@@ -529,6 +586,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         draftsByDemoId,
         fetchDraft,
         triggerAnalyze,
+        triggerProcessRecording,
         approveDraft,
         rejectDraft,
         stats,

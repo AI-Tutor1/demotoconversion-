@@ -18,9 +18,11 @@ export default function DashboardPage() {
     user,
     draftsByDemoId,
     triggerAnalyze,
+    triggerProcessRecording,
     flash,
   } = useStore();
   const [analyzingId, setAnalyzingId] = useState<number | null>(null);
+  const [processingId, setProcessingId] = useState<number | null>(null);
 
   const canAnalyze = user?.role === "analyst" || user?.role === "manager";
 
@@ -40,6 +42,21 @@ export default function DashboardPage() {
     setAnalyzingId(null);
     if (!res.ok) {
       flash(res.error);
+      return;
+    }
+    router.push(`/analyst/${demoId}`);
+  };
+
+  const onProcessRecording = async (demoId: number) => {
+    setProcessingId(demoId);
+    const res = await triggerProcessRecording(demoId);
+    setProcessingId(null);
+    if (!res.ok) {
+      flash(res.error);
+      return;
+    }
+    if (res.status === "transcription_only") {
+      flash("Transcript saved. Auto-analysis failed — click Analyze to retry.");
       return;
     }
     router.push(`/analyst/${demoId}`);
@@ -125,6 +142,7 @@ export default function DashboardPage() {
             {rangedDemos.slice(0, 6).map((d) => {
               const draft = draftsByDemoId[d.id];
               const hasTranscript = !!(d.transcript && d.transcript.trim());
+              const hasRecording = !!(d.recording && d.recording.trim());
               return (
                 <div key={d.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 0", borderBottom: "1px solid #f0f0f0", gap: 8, flexWrap: "wrap" }}>
                   <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
@@ -159,6 +177,22 @@ export default function DashboardPage() {
                         }}
                       >
                         {analyzingId === d.id ? "Analyzing…" : "Analyze"}
+                      </button>
+                    )}
+                    {canAnalyze && !hasTranscript && hasRecording && (
+                      <button
+                        onClick={() => onProcessRecording(d.id)}
+                        disabled={processingId === d.id}
+                        className="pill pill-outline"
+                        style={{
+                          padding: "4px 12px",
+                          fontSize: 12,
+                          opacity: processingId === d.id ? 0.6 : 1,
+                          cursor: processingId === d.id ? "default" : "pointer",
+                        }}
+                        title="Download recording, transcribe, and auto-analyze"
+                      >
+                        {processingId === d.id ? "Processing… (1–3 min)" : "Process recording"}
                       </button>
                     )}
                     <StatusBadge status={d.status} />

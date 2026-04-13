@@ -72,15 +72,25 @@ export interface Demo {
 // AI-generated draft output stored in the demo_drafts table.
 // The shape of draft_data mirrors the Python agent's JSON output exactly
 // (snake_case), so the JSONB column and this type are the same shape.
+export interface ScoreEvidence {
+  score: number;
+  evidence: string;
+}
+
 export interface DraftData {
+  q1_teaching_methodology: ScoreEvidence;
+  q2_curriculum_alignment: ScoreEvidence;
+  q3_student_interactivity: ScoreEvidence;
+  q4_differentiated_teaching: ScoreEvidence;
+  q5_psychological_safety: ScoreEvidence;
+  q6_rapport_session_opening: ScoreEvidence;
+  q7_technical_quality: ScoreEvidence;
+  q8_formative_assessment: ScoreEvidence;
+  total_score: number;
+  score_interpretation: string;
   pour_issues: { category: string; description: string }[];
-  methodology: string;
-  topic: string;
-  resources: string;
-  engagement: string;
-  effectiveness: string;
-  suggested_rating: number;
-  suggestions: string;
+  overall_summary: string;
+  improvement_suggestions: string;
   improvement_focus: string;
 }
 
