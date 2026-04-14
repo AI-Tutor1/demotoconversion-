@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { BLUE, LIGHT_GRAY, MUTED, NEAR_BLACK, type DemoDraft } from "@/lib/types";
 import { Q_KEYS, Q_META, interpretationBadge, scoreColor } from "@/lib/scorecard";
 
@@ -7,11 +8,14 @@ interface ScorecardSummaryProps {
   draft: DemoDraft;
   recording?: string;
   studentRaw?: number;
+  // When set, renders a "View full scorecard →" link in the header — used by
+  // the Sales detail panel to deep-link into /analyst/{id}'s read-only report.
+  reportHref?: string;
 }
 
 // Compact, read-only scorecard — used in the Sales detail panel and anywhere
 // else a concise "what did the analyst see in this demo" view is needed.
-export function ScorecardSummary({ draft, recording, studentRaw }: ScorecardSummaryProps) {
+export function ScorecardSummary({ draft, recording, studentRaw, reportHref }: ScorecardSummaryProps) {
   const d = draft.draft_data;
   const badge = interpretationBadge(d.total_score);
 
@@ -29,6 +33,15 @@ export function ScorecardSummary({ draft, recording, studentRaw }: ScorecardSumm
           </span>
         </div>
       </div>
+
+      {reportHref && (
+        <Link
+          href={reportHref}
+          style={{ fontSize: 12, color: BLUE, textDecoration: "none", fontWeight: 500, display: "inline-block", marginBottom: 10 }}
+        >
+          View full scorecard →
+        </Link>
+      )}
 
       {recording && (
         <p style={{ fontSize: 12, marginBottom: 10 }}>

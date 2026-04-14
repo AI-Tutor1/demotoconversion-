@@ -511,6 +511,7 @@ The bell icon count comes from `notifications` useMemo in `lib/store.tsx`. Curre
 
 - **Pending demos aged 3+ days** — positive IDs = `demo.id`. Text: `"{student} pending {n} days"`
 - **AI drafts with `status = "pending_review"`** — **negative IDs** = `-demo.id`. Text: `"AI draft ready: {student}"`
+- **Recordings not yet processed** — Pending demos with a recording URL but no transcript yet. **Negative IDs offset by −10⁹** = `-demo.id - 1_000_000_000` (kept disjoint from the draft-notification range, which lives in `(-10⁹, 0)`). Text: `"Recording not yet processed: {student}"`
 
 ### Why negative IDs for drafts
 `demo.id` is `Date.now()` in ms (~1.7 × 10¹²). Any positive offset (e.g., `demo_id + 100000`) would **collide** with a real demo created in the future. Negative IDs are out of the `Date.now()` range entirely and collision-proof. If you add a third notification source, use another disjoint numeric space (e.g., negatives < −10¹⁵, or switch the whole `Notification.id` field to `string`).

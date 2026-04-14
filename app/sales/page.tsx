@@ -3,6 +3,7 @@ import { useState, useMemo, useEffect } from "react";
 import { useStore } from "@/lib/store";
 import { StatusBadge, Field, EmptyState } from "@/components/ui";
 import { ScorecardSummary } from "@/components/scorecard-summary";
+import { SearchableSelect } from "@/components/searchable-select";
 import { TEACHERS, ACCT_TYPES, MUTED, BLUE, LIGHT_GRAY, NEAR_BLACK, type Demo } from "@/lib/types";
 import { isFinalized } from "@/lib/scorecard";
 import { ageDays, ageColor, ageTextColor, formatMonth, exportCSV } from "@/lib/utils";
@@ -322,9 +323,33 @@ export default function SalesPage() {
             ))}
           </div>
           <div style={{ display: "flex", gap: 8, marginTop: 8, flexWrap: "wrap" }}>
-            <select value={fTeacher} onChange={(e) => setFTeacher(e.target.value)} className="filter-select-dark"><option value="">All teachers</option>{TEACHERS.map((t) => <option key={t.id} value={t.name}>{t.name}</option>)}</select>
-            <select value={fAgent} onChange={(e) => setFAgent(e.target.value)} className="filter-select-dark"><option value="">All agents</option>{agentOptions.map((a) => <option key={a} value={a}>{a}</option>)}</select>
-            <select value={sort} onChange={(e) => setSort(e.target.value)} className="filter-select-dark"><option value="date-desc">Newest</option><option value="date-asc">Oldest</option><option value="rating-desc">Highest rated</option><option value="age-desc">Longest pending</option></select>
+            <SearchableSelect
+              variant="dark"
+              value={fTeacher}
+              onChange={setFTeacher}
+              placeholder="All teachers"
+              options={TEACHERS.map((t) => ({ value: t.name, label: t.name }))}
+            />
+            <SearchableSelect
+              variant="dark"
+              value={fAgent}
+              onChange={setFAgent}
+              placeholder="All agents"
+              options={agentOptions.map((a) => ({ value: a, label: a }))}
+            />
+            <SearchableSelect
+              variant="dark"
+              value={sort}
+              onChange={setSort}
+              placeholder="Sort"
+              clearLabel="Default order"
+              options={[
+                { value: "date-desc",   label: "Newest" },
+                { value: "date-asc",    label: "Oldest" },
+                { value: "rating-desc", label: "Highest rated" },
+                { value: "age-desc",    label: "Longest pending" },
+              ]}
+            />
             {hasFilters && <button className="pill" onClick={() => { setFStatus("All"); setFTeacher(""); setFAgent(""); }} style={{ background: "rgba(255,255,255,.1)", color: "#fff", border: "1px solid rgba(255,255,255,.2)", fontSize: 11, padding: "4px 12px" }}>Clear all</button>}
           </div>
           <div style={{ fontSize: 12, color: MUTED, marginTop: 8 }}>{filtered.length} demos{" · "}<button onClick={() => exportCSV(filtered as unknown as Record<string, unknown>[])} style={{ background: "none", border: "none", color: "#2997ff", cursor: "pointer", fontSize: 12 }}>Export filtered CSV</button></div>
@@ -391,6 +416,7 @@ export default function SalesPage() {
                       draft={draft}
                       recording={sel.recording}
                       studentRaw={sel.studentRaw}
+                      reportHref={`/analyst/${sel.id}`}
                     />
                   );
                 }

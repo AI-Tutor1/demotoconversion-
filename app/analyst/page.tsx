@@ -4,6 +4,7 @@ import { Suspense, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { useStore } from "@/lib/store";
 import { Field, Stars, SectionHeader } from "@/components/ui";
+import { SearchableSelect } from "@/components/searchable-select";
 import { TEACHERS, LEVELS, SUBJECTS, POUR_CATS, LIGHT_GRAY, MUTED, BLUE } from "@/lib/types";
 import { formatMonth } from "@/lib/utils";
 
@@ -170,12 +171,19 @@ function AnalystForm() {
                 {derivedMonth && <div style={{ fontSize: 11, color: BLUE, marginTop: 4, fontWeight: 500 }}>Month: {derivedMonth}</div>}
               </Field>
               <Field label="Teacher *" error={errors.teacher}>
-                <select className={"apple-input apple-select" + (errors.teacher ? " error" : "")} value={f.teacher} onChange={(e) => u("teacher", e.target.value)}>
-                  <option value="">Select teacher...</option>
-                  {TEACHERS.map((t) => (
-                    <option key={t.id} value={t.name}>{t.name} (ID: {t.uid})</option>
-                  ))}
-                </select>
+                <SearchableSelect
+                  buttonClassName={"apple-input apple-select" + (errors.teacher ? " error" : "")}
+                  width="100%"
+                  invalid={!!errors.teacher}
+                  value={f.teacher}
+                  onChange={(v) => u("teacher", v)}
+                  placeholder="Select teacher..."
+                  clearLabel="Clear selection"
+                  options={TEACHERS.map((t) => ({
+                    value: t.name,
+                    label: `${t.name} (ID: ${t.uid})`,
+                  }))}
+                />
               </Field>
             </div>
             <Field label="Recording URL">
@@ -195,16 +203,28 @@ function AnalystForm() {
             </Field>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
               <Field label="Level *" error={errors.level}>
-                <select className={"apple-input apple-select" + (errors.level ? " error" : "")} value={f.level} onChange={(e) => u("level", e.target.value)}>
-                  <option value="">Select...</option>
-                  {LEVELS.map((l) => <option key={l}>{l}</option>)}
-                </select>
+                <SearchableSelect
+                  buttonClassName={"apple-input apple-select" + (errors.level ? " error" : "")}
+                  width="100%"
+                  invalid={!!errors.level}
+                  value={f.level}
+                  onChange={(v) => u("level", v)}
+                  placeholder="Select..."
+                  clearLabel="Clear selection"
+                  options={LEVELS.map((l) => ({ value: l, label: l }))}
+                />
               </Field>
               <Field label="Subject *" error={errors.subject}>
-                <select className={"apple-input apple-select" + (errors.subject ? " error" : "")} value={f.subject} onChange={(e) => u("subject", e.target.value)}>
-                  <option value="">Select...</option>
-                  {SUBJECTS.map((s) => <option key={s}>{s}</option>)}
-                </select>
+                <SearchableSelect
+                  buttonClassName={"apple-input apple-select" + (errors.subject ? " error" : "")}
+                  width="100%"
+                  invalid={!!errors.subject}
+                  value={f.subject}
+                  onChange={(v) => u("subject", v)}
+                  placeholder="Select..."
+                  clearLabel="Clear selection"
+                  options={SUBJECTS.map((s) => ({ value: s, label: s }))}
+                />
               </Field>
             </div>
           </SectionHeader>

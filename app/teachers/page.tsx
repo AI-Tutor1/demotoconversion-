@@ -1,14 +1,17 @@
 "use client";
 import { useState, useMemo } from "react";
 import { useStore } from "@/lib/store";
+import Link from "next/link";
 import { Stars, StatusBadge, EmptyState } from "@/components/ui";
 import { TeacherScorecard } from "@/components/teacher-scorecard";
+import { SearchableSelect } from "@/components/searchable-select";
 import { LIGHT_GRAY, MUTED, BLUE, NEAR_BLACK } from "@/lib/types";
 import { initials } from "@/lib/utils";
+import { isFinalized } from "@/lib/scorecard";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from "recharts";
 
 export default function TeachersPage() {
-  const { rangedDemos: demos } = useStore();
+  const { rangedDemos: demos, draftsByDemoId } = useStore();
   const [sortBy, setSortBy] = useState("rate-desc");
   const [drill, setDrill] = useState<string | null>(null);
 
@@ -41,11 +44,20 @@ export default function TeachersPage() {
             <h1 style={{ fontSize: 40, fontWeight: 600, lineHeight: 1.1 }}>Teacher performance.</h1>
             <p style={{ fontSize: 15, color: MUTED, marginTop: 6 }}>Click any card to drill down. {tStats.length} teachers.</p>
           </div>
-          <select value={sortBy} onChange={(e) => setSortBy(e.target.value)} className="filter-select-light">
-            <option value="rate-desc">Highest conversion</option><option value="rate-asc">Lowest conversion</option>
-            <option value="rating-desc">Highest rated</option><option value="volume-desc">Most demos</option>
-            <option value="name">Name A-Z</option>
-          </select>
+          <SearchableSelect
+            variant="light"
+            value={sortBy}
+            onChange={setSortBy}
+            placeholder="Sort"
+            clearLabel="Default order"
+            options={[
+              { value: "rate-desc",    label: "Highest conversion" },
+              { value: "rate-asc",     label: "Lowest conversion" },
+              { value: "rating-desc",  label: "Highest rated" },
+              { value: "volume-desc",  label: "Most demos" },
+              { value: "name",         label: "Name A-Z" },
+            ]}
+          />
         </div>
       </section>
 
@@ -106,17 +118,30 @@ export default function TeachersPage() {
                 <div className="section-label" style={{ marginBottom: 8 }}>Demo history</div>
                 <div style={{ overflowX: "auto" }}>
                   <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
-                    <thead><tr>{["Date", "Student", "Level", "Subject", "Rating", "Status"].map((h) => <th key={h} style={{ textAlign: "left", padding: "6px 10px", borderBottom: "1px solid #e8e8ed", color: MUTED, fontSize: 10, fontWeight: 600, textTransform: "uppercase" }}>{h}</th>)}</tr></thead>
-                    <tbody>{drillData.demos.map((d) => (
-                      <tr key={d.id} style={{ borderBottom: "1px solid #f5f5f7" }}>
-                        <td style={{ padding: "6px 10px", color: MUTED }}>{d.date}</td>
-                        <td style={{ padding: "6px 10px", fontWeight: 500 }}>{d.student}</td>
-                        <td style={{ padding: "6px 10px" }}>{d.level}</td>
-                        <td style={{ padding: "6px 10px" }}>{d.subject}</td>
-                        <td style={{ padding: "6px 10px" }}><Stars value={d.analystRating} readOnly onChange={() => {}} /></td>
-                        <td style={{ padding: "6px 10px" }}><StatusBadge status={d.status} /></td>
-                      </tr>
-                    ))}</tbody>
+                    <thead><tr>{["Date", "Student", "Level", "Subject", "Rating", "Status", "Report"].map((h) => <th key={h} style={{ textAlign: "left", padding: "6px 10px", borderBottom: "1px solid #e8e8ed", color: MUTED, fontSize: 10, fontWeight: 600, textTransform: "uppercase" }}>{h}</th>)}</tr></thead>
+                    <tbody>{drillData.demos.map((d) => {
+                      const draft = draftsByDemoId[d.id];
+                      const hasReport = draft && isFinalized(draft);
+                      return (
+                        <tr key={d.id} style={{ borderBottom: "1px solid #f5f5f7" }}>
+                          <td style={{ padding: "6px 10px", color: MUTED }}>{d.date}</td>
+                          <td style={{ padding: "6px 10px", fontWeight: 500 }}>{d.student}</td>
+                          <td style={{ padding: "6px 10px" }}>{d.level}</td>
+                          <td style={{ padding: "6px 10px" }}>{d.subject}</td>
+                          <td style={{ padding: "6px 10px" }}><Stars value={d.analystRating} readOnly onChange={() => {}} /></td>
+                          <td style={{ padding: "6px 10px" }}><StatusBadge status={d.status} /></td>
+                          <td style={{ padding: "6px 10px" }}>
+                            {hasReport ? (
+                              <Link href={`/analyst/${d.id}`} style={{ color: BLUE, textDecoration: "none", fontWeight: 500 }}>
+                                View →
+                              </Link>
+                            ) : (
+                              <span style={{ color: MUTED }}>—</span>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}</tbody>
                   </table>
                 </div>
               </div>

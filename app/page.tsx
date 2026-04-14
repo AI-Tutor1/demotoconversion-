@@ -20,6 +20,7 @@ export default function DashboardPage() {
     triggerAnalyze,
     triggerProcessRecording,
     flash,
+    logActivity,
   } = useStore();
   const [analyzingId, setAnalyzingId] = useState<number | null>(null);
   const [processingId, setProcessingId] = useState<number | null>(null);
@@ -48,17 +49,27 @@ export default function DashboardPage() {
   };
 
   const onProcessRecording = async (demoId: number) => {
+    const demo = rangedDemos.find((d) => d.id === demoId);
+    const studentLabel = demo?.student ?? `Demo ${demoId}`;
     setProcessingId(demoId);
+    logActivity("started processing", user?.full_name ?? "System", studentLabel);
     const res = await triggerProcessRecording(demoId);
     setProcessingId(null);
     if (!res.ok) {
+      logActivity("processing failed", "AI", `${studentLabel} — ${res.error}`);
       flash(res.error);
       return;
     }
     if (res.status === "transcription_only") {
+      logActivity(
+        "processing partial",
+        "AI",
+        `${studentLabel} — transcript saved, analysis failed`,
+      );
       flash("Transcript saved. Auto-analysis failed — click Analyze to retry.");
       return;
     }
+    logActivity("processing complete", "AI", `${studentLabel} — scorecard ready`);
     router.push(`/analyst/${demoId}`);
   };
 
@@ -163,7 +174,8 @@ export default function DashboardPage() {
                   </div>
                   <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                     {canAnalyze && reviewed && (
-                      <span
+                      <Link
+                        href={`/analyst/${d.id}`}
                         style={{
                           fontSize: 12,
                           fontWeight: 600,
@@ -171,11 +183,12 @@ export default function DashboardPage() {
                           display: "inline-flex",
                           alignItems: "center",
                           gap: 4,
+                          textDecoration: "none",
                         }}
-                        title="Analyst has finalized this draft"
+                        title="View scorecard report"
                       >
                         ✓ Reviewed
-                      </span>
+                      </Link>
                     )}
                     {canAnalyze && pendingReview && (
                       <Link

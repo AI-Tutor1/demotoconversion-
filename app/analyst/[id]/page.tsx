@@ -4,6 +4,8 @@ import { useEffect, useState, use } from "react";
 import Link from "next/link";
 import { useStore } from "@/lib/store";
 import DraftReview from "@/components/draft-review";
+import { ScorecardReport } from "@/components/scorecard-report";
+import { isFinalized } from "@/lib/scorecard";
 import { BLUE, LIGHT_GRAY, MUTED, type DemoDraft } from "@/lib/types";
 
 export default function AnalystReviewPage({
@@ -131,7 +133,11 @@ export default function AnalystReviewPage({
     );
   }
 
-  // Header + split view
+  // Header + split view. After approval, render the read-only report
+  // instead of the editable draft so the page becomes a permanent record
+  // any role with link access can revisit.
+  const finalized = isFinalized(draft);
+
   return (
     <>
       <section style={{ background: LIGHT_GRAY, paddingTop: 92, paddingBottom: 24 }}>
@@ -143,7 +149,7 @@ export default function AnalystReviewPage({
             ← Back to dashboard
           </Link>
           <p className="section-label" style={{ marginTop: 12 }}>
-            Demo {demoId} · AI-assisted review
+            Demo {demoId} · {finalized ? "QA scorecard report" : "AI-assisted review"}
           </p>
           <h1
             style={{
@@ -162,7 +168,11 @@ export default function AnalystReviewPage({
       </section>
 
       <section style={{ background: LIGHT_GRAY, padding: "8px 24px 60px" }}>
-        <DraftReview demo={demo} draft={draft} />
+        {finalized ? (
+          <ScorecardReport demo={demo} draft={draft} />
+        ) : (
+          <DraftReview demo={demo} draft={draft} />
+        )}
       </section>
     </>
   );

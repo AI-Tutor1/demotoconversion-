@@ -532,6 +532,23 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         time: `${ageDays(d.ts)}d`,
       }));
 
+    // Pending demos with a recording URL but no transcript — analyst hasn't
+    // clicked Process Recording yet. Offset IDs to a disjoint negative range
+    // so they don't collide with the draft notifications below or demo.id.
+    const unprocessedRecording: Notification[] = demos
+      .filter(
+        (d) =>
+          d.status === "Pending" &&
+          !!d.recording &&
+          d.recording.trim() !== "" &&
+          !(d.transcript && d.transcript.trim()),
+      )
+      .map((d) => ({
+        id: -d.id - 1_000_000_000,
+        text: `Recording not yet processed: ${d.student}`,
+        time: "Process",
+      }));
+
     // AI drafts awaiting review — negative IDs to avoid collision with
     // demo.id (Date.now() ms ~1.7e12; negatives are out of that range).
     const demoById = new Map(demos.map((d) => [d.id, d]));
@@ -546,7 +563,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         };
       });
 
-    return [...draftReady, ...pending];
+    return [...draftReady, ...unprocessedRecording, ...pending];
   }, [demos, drafts]);
 
   const stats = useMemo(() => {
