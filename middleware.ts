@@ -6,6 +6,7 @@ type CookieSet = { name: string; value: string; options: CookieOptions };
 // Route protection matrix (mirrors SECURITY.md)
 const ROLE_GATES: { prefix: string; allowed: string[] }[] = [
   { prefix: "/analyst", allowed: ["analyst", "manager"] },
+  { prefix: "/drafts",  allowed: ["analyst", "manager"] },
   { prefix: "/sales",   allowed: ["sales_agent", "manager"] },
   { prefix: "/admin",   allowed: ["manager"] },
 ];

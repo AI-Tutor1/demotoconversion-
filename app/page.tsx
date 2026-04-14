@@ -143,6 +143,13 @@ export default function DashboardPage() {
               const draft = draftsByDemoId[d.id];
               const hasTranscript = !!(d.transcript && d.transcript.trim());
               const hasRecording = !!(d.recording && d.recording.trim());
+              // Reviewed = the analyst has finalized this draft (approved or
+              // edited some fields). Rejected drafts fall through and show
+              // "Analyze" so the analyst can re-run the AI.
+              const reviewed =
+                draft && (draft.status === "approved" || draft.status === "partially_edited");
+              const pendingReview = draft && draft.status === "pending_review";
+              const canReanalyze = !draft || draft.status === "rejected";
               return (
                 <div key={d.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 0", borderBottom: "1px solid #f0f0f0", gap: 8, flexWrap: "wrap" }}>
                   <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
@@ -155,7 +162,22 @@ export default function DashboardPage() {
                     </div>
                   </div>
                   <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                    {canAnalyze && hasTranscript && draft && draft.status === "pending_review" && (
+                    {canAnalyze && reviewed && (
+                      <span
+                        style={{
+                          fontSize: 12,
+                          fontWeight: 600,
+                          color: "#1B5E20",
+                          display: "inline-flex",
+                          alignItems: "center",
+                          gap: 4,
+                        }}
+                        title="Analyst has finalized this draft"
+                      >
+                        ✓ Reviewed
+                      </span>
+                    )}
+                    {canAnalyze && pendingReview && (
                       <Link
                         href={`/analyst/${d.id}`}
                         className="pill pill-outline"
@@ -164,7 +186,7 @@ export default function DashboardPage() {
                         Review draft
                       </Link>
                     )}
-                    {canAnalyze && hasTranscript && !draft && (
+                    {canAnalyze && hasTranscript && canReanalyze && (
                       <button
                         onClick={() => onAnalyze(d.id)}
                         disabled={analyzingId === d.id}
@@ -179,7 +201,7 @@ export default function DashboardPage() {
                         {analyzingId === d.id ? "Analyzing…" : "Analyze"}
                       </button>
                     )}
-                    {canAnalyze && !hasTranscript && hasRecording && (
+                    {canAnalyze && !hasTranscript && hasRecording && canReanalyze && (
                       <button
                         onClick={() => onProcessRecording(d.id)}
                         disabled={processingId === d.id}

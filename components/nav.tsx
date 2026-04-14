@@ -11,6 +11,7 @@ import { exportCSV } from "@/lib/utils";
 const NAV_ITEMS: { label: string; href: string; roles?: ("analyst" | "sales_agent" | "manager")[] }[] = [
   { label: "Dashboard", href: "/" },
   { label: "Analyst",   href: "/analyst",   roles: ["analyst", "manager"] },
+  { label: "Drafts",    href: "/drafts",    roles: ["analyst", "manager"] },
   { label: "Sales",     href: "/sales",     roles: ["sales_agent", "manager"] },
   { label: "Kanban",    href: "/kanban" },
   { label: "Analytics", href: "/analytics" },
