@@ -32,9 +32,11 @@ Zero matches required.
 ### Law 3: Muhammad, Not Zain
 The third sales agent is **Muhammad**. "Zain" was wrong and was globally replaced. After every edit, run:
 ```bash
-grep -rn 'Zain' app/ components/ lib/ --include='*.tsx' --include='*.ts'
+grep -rnE '"Zain"|'\''Zain'\''' app/ components/ lib/ --include='*.tsx' --include='*.ts'
 ```
 Zero matches required.
+
+The pattern matches a standalone quoted `"Zain"` / `'Zain'` string literal — that's how the bug originally manifested (`{ id: 3, name: "Zain" }` in the AGENTS array). It deliberately does **not** match legitimate teacher names that contain "Zain" as a substring (e.g. `"Syed Zain Ali Akbar"`, `"Zainab Fatima"` — added to the TEACHERS roster on 2026-04-14). The naive `grep 'Zain'` would false-positive on those.
 
 ### Law 4: Bracket Balance
 After creating or editing any `.tsx` file:
