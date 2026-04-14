@@ -503,6 +503,16 @@ Captured at Phase 3 kickoff so these don't need to be re-derived. All decisions 
 - **Weakest-question is ratio-based** (`avg / max`), not absolute. Prevents Q6 (binary) from being flagged every time a teacher ever scores 0 on rapport
 - **Score bucket thresholds** (0-7 / 8-14 / 15-21 / 22-27 / 28-32): live in `SCORE_BUCKETS` in `lib/scorecard.ts`. Keep aligned with `interpretationBadge` thresholds (28 / 22 / 15) — if you move one, move both
 
+### POUR category invariant (added 2026-04-14 — BUG-019)
+`pour_issues.category` is locked to **exactly 7 strings** across three enforcement layers. A freeform category in any one of them will get rejected by another:
+- **DB CHECK** in `supabase/migrations/20260412112900_initial_schema.sql:113-115` — `category IN ('Video','Interaction','Technical','Cancellation','Resources','Time','No Show')`
+- **Frontend** `POUR_CATS` in `lib/types.ts` — same 7 strings
+- **Backend** `_VALID_POUR_CATEGORIES` + `_POUR_SYNONYMS` + `_resolve_pour_category` + `coerce_pour_issues` in `backend/app/models.py` — case-folds exact matches, keyword-maps synonyms ("Audio"/"Mic"/"Pacing"/etc. → closest canonical), **drops** unrecognized categories rather than promoting to "Other" (the old fallback that caused this bug)
+- **Frontend write-time safety net** in `lib/transforms.ts::pourToDbRows` — filters out any `.cat ∉ POUR_CATS` before the INSERT fires, console-warns on drop. Defends historical drafts still sitting in `demo_drafts.draft_data` with bad categories.
+- **Prompt** in `backend/agents/demo_analyst.py` — includes an explicit "MUST be one of these exact strings … do not invent new categories (no 'Other', 'Misc', 'Pacing', 'Engagement', 'Audio'…)" directive.
+
+If you ever want to add a new POUR category, you **must** update all three (DB migration + `POUR_CATS` + `_VALID_POUR_CATEGORIES`) in the same commit. The synonym map in the backend exists to rescue AI improvisation, not to expand the taxonomy.
+
 ---
 
 ## Part 12: Notification Sources

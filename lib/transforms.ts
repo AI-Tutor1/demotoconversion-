@@ -1,4 +1,4 @@
-import type { Demo, PourIssue, WorkflowStage } from "./types";
+import { POUR_CATS, type Demo, type PourIssue, type WorkflowStage } from "./types";
 
 // ─── DB row shapes ───────────────────────────────────────────
 
@@ -229,13 +229,27 @@ export function demoUpdatesToDb(partial: Partial<Demo>): Record<string, unknown>
 
 // ─── POUR: App → DB rows for INSERT ──────────────────────────
 
+// Safety net for the pour_issues CHECK constraint. The DB allows exactly the
+// 7 strings in POUR_CATS; historical AI drafts in demo_drafts.draft_data can
+// still contain categories outside that set (e.g. "Other" from an earlier
+// backend coerce). Drop them here before the INSERT so the rest of the
+// approval still goes through.
+const VALID_POUR_CATS = new Set<string>(POUR_CATS);
+
 export function pourToDbRows(
   demoId: number,
   pour: PourIssue[]
 ): { demo_id: number; category: string; description: string }[] {
-  return pour.map((p) => ({
-    demo_id: demoId,
-    category: p.cat,
-    description: p.desc,
-  }));
+  const rows: { demo_id: number; category: string; description: string }[] = [];
+  for (const p of pour) {
+    if (!VALID_POUR_CATS.has(p.cat)) {
+      console.warn(
+        `[pourToDbRows] dropping pour_issue with invalid category "${p.cat}" ` +
+          `(demo_id=${demoId}); allowed: ${[...VALID_POUR_CATS].join(", ")}`
+      );
+      continue;
+    }
+    rows.push({ demo_id: demoId, category: p.cat, description: p.desc });
+  }
+  return rows;
 }

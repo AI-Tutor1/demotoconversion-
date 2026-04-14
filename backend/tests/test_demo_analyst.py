@@ -89,6 +89,113 @@ async def test_retry_on_invalid_json_sums_tokens() -> None:
     assert "not valid JSON" in retry_messages[3].content
 
 
+# ─── pour_issues coercion ─────────────────────────────────────────────
+# The DB CHECK constraint on pour_issues.category allows exactly:
+#   Video / Interaction / Technical / Cancellation / Resources / Time / No Show
+# Anything else (including the old "Other" fallback) must be remapped via
+# _resolve_pour_category or dropped with a warning. These tests pin that
+# contract so a future regression can't reintroduce "Other" or freeform
+# categories into demo_drafts.draft_data.
+
+_BASE_SCORECARD: dict = {
+    "q1_teaching_methodology":     {"score": 4, "evidence": "x"},
+    "q2_curriculum_alignment":     {"score": 4, "evidence": "x"},
+    "q3_student_interactivity":    {"score": 3, "evidence": "x"},
+    "q4_differentiated_teaching":  {"score": 4, "evidence": "x"},
+    "q5_psychological_safety":     {"score": 5, "evidence": "x"},
+    "q6_rapport_session_opening":  {"score": 1, "evidence": "x"},
+    "q7_technical_quality":        {"score": 5, "evidence": "x"},
+    "q8_formative_assessment":     {"score": 2, "evidence": "x"},
+    "total_score": 28,
+    "score_interpretation": "Excellent",
+    "overall_summary": "ok",
+    "improvement_suggestions": "ok",
+    "improvement_focus": "ok",
+}
+
+
+def _build(pour_issues: list) -> DraftOutput:
+    return DraftOutput(**_BASE_SCORECARD, pour_issues=pour_issues)
+
+
+def test_pour_objects_with_valid_categories_pass_through() -> None:
+    d = _build([
+        {"category": "Video",       "description": "Camera off at 03:15"},
+        {"category": "Technical",   "description": "Audio cut out"},
+    ])
+    assert [p.category for p in d.pour_issues] == ["Video", "Technical"]
+
+
+def test_pour_colon_strings_are_split_when_category_is_valid() -> None:
+    d = _build(["Technical: audio drops at 02:30"])
+    assert len(d.pour_issues) == 1
+    assert d.pour_issues[0].category == "Technical"
+    assert d.pour_issues[0].description == "audio drops at 02:30"
+
+
+def test_pour_case_insensitive_canonicalisation() -> None:
+    d = _build([{"category": "technical", "description": "lag"}])
+    assert d.pour_issues[0].category == "Technical"
+
+
+def test_pour_synonym_map_object_form() -> None:
+    # AI freely improvises categories outside the 7 — each should be remapped.
+    d = _build([
+        {"category": "Audio",       "description": "muffled mic"},
+        {"category": "Engagement",  "description": "student silent"},
+        {"category": "Pacing",      "description": "rushed end"},
+        {"category": "Worksheet",   "description": "no slides shared"},
+    ])
+    assert [p.category for p in d.pour_issues] == [
+        "Technical",
+        "Interaction",
+        "Time",
+        "Resources",
+    ]
+
+
+def test_pour_synonym_map_bare_string_without_colon() -> None:
+    # Old fallback path would have stored this under category="Other".
+    d = _build(["Audio drops at 02:30"])
+    assert len(d.pour_issues) == 1
+    assert d.pour_issues[0].category == "Technical"
+
+
+def test_pour_other_category_is_dropped_not_promoted() -> None:
+    # The original coerce injected {"category":"Other"} and the DB rejected it.
+    d = _build([{"category": "Other", "description": "something weird"}])
+    assert d.pour_issues == []
+
+
+def test_pour_unknown_category_is_dropped() -> None:
+    d = _build([{"category": "Behavioural", "description": "student moody"}])
+    assert d.pour_issues == []
+
+
+def test_pour_unknown_bare_string_is_dropped() -> None:
+    d = _build(["Something weird happened"])
+    assert d.pour_issues == []
+
+
+def test_pour_mixed_valid_and_invalid_keeps_only_valid() -> None:
+    d = _build([
+        {"category": "Video",       "description": "camera off"},
+        {"category": "Other",       "description": "drop me"},
+        "Audio drops at 01:00",
+        "Something weird",
+    ])
+    cats = [p.category for p in d.pour_issues]
+    assert cats == ["Video", "Technical"]
+
+
+def test_pour_empty_list_stays_empty() -> None:
+    d = _build([])
+    assert d.pour_issues == []
+
+
+# ─── Live integration test ────────────────────────────────────────────
+
+
 @pytest.mark.live
 @pytest.mark.skipif(
     not os.environ.get("ANTHROPIC_API_KEY", "").startswith("sk-ant-"),

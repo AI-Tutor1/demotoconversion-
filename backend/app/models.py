@@ -1,7 +1,61 @@
+import logging
 from datetime import datetime
 from typing import Any, Optional
 
 from pydantic import BaseModel, Field, field_validator
+
+_log = logging.getLogger(__name__)
+
+# The 7 categories allowed by the pour_issues.category CHECK constraint and by
+# POUR_CATS on the frontend. Kept as a module-level constant so the coerce
+# validator stays in sync — never add a value here without also adding it to
+# both `POUR_CATS` in lib/types.ts and the SQL CHECK constraint.
+_VALID_POUR_CATEGORIES: tuple[str, ...] = (
+    "Video",
+    "Interaction",
+    "Technical",
+    "Cancellation",
+    "Resources",
+    "Time",
+    "No Show",
+)
+_VALID_POUR_LOWER = {c.lower(): c for c in _VALID_POUR_CATEGORIES}
+
+# Keyword → canonical-category map. When the AI improvises a category outside
+# the 7 (e.g. "Pacing", "Audio", "Engagement"), we try to rescue the entry by
+# matching the raw text against these substrings before falling back to a drop.
+_POUR_SYNONYMS: tuple[tuple[tuple[str, ...], str], ...] = (
+    (("audio", "sound", "mic", "microphone", "connection", "lag",
+      "freeze", "frozen", "internet", "glitch", "crash", "platform"),  "Technical"),
+    (("camera", "visual", "screen share", "screenshare"),              "Video"),
+    (("engagement", "engaged", "participation", "one-way", "one way",
+      "one-directional", "passive", "interactivity"),                  "Interaction"),
+    (("worksheet", "material", "homework", "resource", "textbook"),    "Resources"),
+    (("pacing", "late", "rushed", "ended early", "started late",
+      "time management", "ran out of time", "overran"),                "Time"),
+    (("absent", "no show", "no-show", "didn't show", "did not show"),  "No Show"),
+    (("cancel", "reschedul"),                                          "Cancellation"),
+)
+
+
+def _resolve_pour_category(raw: str) -> str | None:
+    """Return a canonical POUR category for `raw`, or None if unrecognized.
+
+    1. Case-insensitive exact match against the 7 valid categories.
+    2. Substring match against the synonym map.
+    3. Otherwise None — caller should drop the entry and log the original.
+    """
+    if not raw:
+        return None
+    t = raw.strip()
+    lower = t.lower()
+    if lower in _VALID_POUR_LOWER:
+        return _VALID_POUR_LOWER[lower]
+    for keywords, target in _POUR_SYNONYMS:
+        for kw in keywords:
+            if kw in lower:
+                return target
+    return None
 
 
 class PourIssue(BaseModel):
@@ -46,21 +100,61 @@ class DraftOutput(BaseModel):
     @field_validator("pour_issues", mode="before")
     @classmethod
     def coerce_pour_issues(cls, v: Any) -> Any:
-        """Claude sometimes returns pour_issues as plain strings instead of
-        {category, description} objects. Coerce strings back into the expected
-        shape: split on the first colon; fall back to category='Other'."""
+        """Normalize pour_issues into the 7-category taxonomy enforced by the
+        DB CHECK constraint on pour_issues.category.
+
+        Claude occasionally returns:
+          - bare strings ("Audio drops at 02:30") instead of objects
+          - objects with freeform categories ("Pacing", "Engagement", "Other")
+
+        Both paths silently produced rows the DB rejected. We now:
+          1. Parse colon-separated strings into {category, description}.
+          2. Run every category through _resolve_pour_category (exact match +
+             keyword synonym map).
+          3. Drop the entry (with a warning) if nothing resolves — rather than
+             promoting to "Other", which isn't in the CHECK allowlist.
+        """
         if not isinstance(v, list):
             return v
         coerced: list[Any] = []
         for item in v:
+            cat_raw: str | None = None
+            desc = ""
+            passthrough: Any = None
+
             if isinstance(item, str):
                 if ":" in item:
-                    cat, desc = item.split(":", 1)
-                    coerced.append({"category": cat.strip(), "description": desc.strip()})
+                    cat_raw, desc = item.split(":", 1)
+                    cat_raw, desc = cat_raw.strip(), desc.strip()
                 else:
-                    coerced.append({"category": "Other", "description": item.strip()})
+                    # No colon — try to pattern-match the whole string into a
+                    # category; otherwise drop.
+                    cat_raw, desc = item.strip(), item.strip()
+            elif isinstance(item, dict):
+                cat_raw = str(item.get("category", "")).strip()
+                desc = str(item.get("description", "")).strip()
+                # Preserve any extra keys the DraftOutput doesn't care about.
+                passthrough = dict(item)
             else:
+                # Something unexpected (None, list, etc.) — let Pydantic reject.
                 coerced.append(item)
+                continue
+
+            canonical = _resolve_pour_category(cat_raw or "")
+            if canonical is None:
+                _log.warning(
+                    "Dropping pour_issue with unrecognized category %r (desc=%r)",
+                    cat_raw,
+                    desc,
+                )
+                continue
+
+            if passthrough is not None:
+                passthrough["category"] = canonical
+                passthrough["description"] = desc
+                coerced.append(passthrough)
+            else:
+                coerced.append({"category": canonical, "description": desc})
         return coerced
 
 

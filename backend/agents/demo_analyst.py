@@ -129,6 +129,13 @@ In addition to the scorecard, flag any of these 7 categories if observed:
 - Time: Session ended early, started late, poor time management
 - No Show: Teacher or student absent
 
+The `category` field MUST be one of these exact strings: "Video",
+"Interaction", "Technical", "Cancellation", "Resources", "Time", "No Show".
+If an issue doesn't fit any category, omit it — do not invent new categories
+(no "Other", "Misc", "Pacing", "Engagement", "Audio", etc.). Each entry must
+be a JSON object: {"category": "<one of the seven>", "description": "<what
+you observed>"} — never a bare string.
+
 ## OUTPUT FORMAT
 Respond ONLY in this JSON format (no markdown, no backticks, no preamble):
 {
