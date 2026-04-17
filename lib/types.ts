@@ -406,8 +406,23 @@ export interface Session {
   recordingLink: string;
   transcript: string | null;
   processingStatus: SessionProcessingStatus;
+  teacherUserId: string | null;
+  teacherUserName: string | null;
+  studentUserId: string | null;
+  studentUserName: string | null;
   createdAt: string;
   updatedAt: string;
+}
+
+// A Session + its approved scorecard draft, joined for teacher/student profiles.
+export interface ApprovedSession extends Session {
+  scorecardTotal: number;
+  scoreInterpretation: string;
+  pourIssues: { category: string; description: string }[];
+  overallSummary: string;
+  improvementSuggestions: string;
+  reviewedAt: string | null;
+  draftStatus: DemoDraftStatus;
 }
 
 export interface SessionDraft {

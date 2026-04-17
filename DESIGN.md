@@ -276,6 +276,14 @@ Five-state pill badge for session processing status. Uses `.session-badge .sessi
 ### CSVUpload (`components/csv-upload.tsx`)
 File upload button with hidden `<input type="file">`. Shows filename after selection. Props: `label`, `onParsed(rows)`, `disabled`. Styled as `.pill .pill-blue`.
 
+### TeacherProductLog (`components/teacher-product-log.tsx`)
+Approved-sessions feed for a teacher profile (and, later, a student profile). Reuses shared helpers rather than redefining visual mapping:
+- `SCORECARD_MAX`, `interpretationBadge(total)` and `scoreColor(score, max)` from [lib/scorecard.ts](lib/scorecard.ts). Do NOT redefine these per surface — all scorecard colors/labels come from one place.
+- Interpretation badge bands: `≥28 Excellent`, `≥22 Good`, `≥15 Below Standard`, else `Significant Concerns`. Colors reuse the "Status Colors" tokens above.
+- Row layout follows the demo-card pattern (LIGHT_GRAY bg, 12px radius, 1px border, 16px 20px padding).
+- Visibility is analyst + manager only; the component short-circuits to an EmptyState for other roles.
+- Clicking a row routes to `/sessions/[id]` — no inline detail duplicated.
+
 ### SessionDraftReview (`components/session-draft-review.tsx`)
 8-question AI scorecard review form with per-field accept/edit/reject. Key patterns:
 - Each field has three states: untouched (gray border), accepted (green `#d4edda` border, locked), edited (orange `#fff3cd` border, input unlocked)

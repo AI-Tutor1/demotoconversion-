@@ -17,11 +17,13 @@ import {
   Notification,
   DemoDraft,
   DemoDraftStatus,
+  ApprovedSession,
 } from "./types";
 import { SEED_ACTIVITY } from "./data";
 import { inDateRange, ageDays } from "./utils";
 import { supabase } from "./supabase";
 import { dbRowToDemo, demoToInsertRow, pourToDbRows, type DemoRow } from "./transforms";
+import { dbRowToApprovedSession } from "./review-transforms";
 import { createSupabaseSync } from "./supabase-sync";
 
 export interface UserProfile {
@@ -81,6 +83,7 @@ interface StoreContextType {
   ) => Promise<void>;
   rejectDraft: (draftId: string) => Promise<void>;
   processingDemoIds: Set<number>;
+  approvedSessions: ApprovedSession[];
   stats: {
     total: number;
     converted: number;
@@ -108,6 +111,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const [salesAgents, setSalesAgents] = useState<UserProfile[]>([]);
   const [drafts, setDrafts] = useState<DemoDraft[]>([]);
   const [processingDemoIds, setProcessingDemoIds] = useState<Set<number>>(new Set());
+  const [approvedSessions, setApprovedSessions] = useState<ApprovedSession[]>([]);
 
   const processedRealtimeIds = useRef<Set<number>>(new Set());
   const processedRealtimeDraftIds = useRef<Set<string>>(new Set());
@@ -190,6 +194,33 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     setDrafts((data as DemoDraft[] | null) ?? []);
   }, []);
 
+  // Approved sessions + their latest approved draft — powers the /teachers Product log tab
+  // and the future /students/[id] profile. RLS already restricts to analyst + manager, so
+  // sales queries silently return nothing; we skip the call entirely as an optimization.
+  const fetchApprovedSessions = useCallback(async (role: UserProfile["role"] | null) => {
+    if (role !== "analyst" && role !== "manager") {
+      setApprovedSessions([]);
+      return;
+    }
+    const { data, error } = await supabase
+      .from("sessions")
+      .select(
+        "*, session_drafts!inner ( draft_data, status, reviewed_at )"
+      )
+      .eq("processing_status", "approved")
+      .in("session_drafts.status", ["approved", "partially_edited"])
+      .order("session_date", { ascending: false })
+      .limit(500);
+    if (error) {
+      setApprovedSessions([]);
+      return;
+    }
+    const mapped = (data ?? [])
+      .map((r) => dbRowToApprovedSession(r as Parameters<typeof dbRowToApprovedSession>[0]))
+      .filter((s): s is ApprovedSession => s !== null);
+    setApprovedSessions(mapped);
+  }, []);
+
   const fetchProcessingDemoIds = useCallback(async () => {
     const { data } = await supabase
       .from("task_queue")
@@ -214,11 +245,14 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     ]);
     if (profileRes.error || !profileRes.data) {
       setUser(null);
+      fetchApprovedSessions(null);
     } else {
-      setUser(profileRes.data as UserProfile);
+      const profile = profileRes.data as UserProfile;
+      setUser(profile);
+      fetchApprovedSessions(profile.role);
     }
     setSalesAgents((agentsRes.data as UserProfile[] | null) ?? []);
-  }, []);
+  }, [fetchApprovedSessions]);
 
   useEffect(() => {
     const { data } = supabase.auth.onAuthStateChange((event) => {
@@ -237,6 +271,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         setSalesAgents([]);
         setDrafts([]);
         setProcessingDemoIds(new Set());
+        setApprovedSessions([]);
         setLoading(false);
       }
     });
@@ -393,6 +428,34 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       supabase.removeChannel(channel);
     };
   }, []);
+
+  // ─── Realtime: approved sessions ─────────────────────────────
+  // Any session flipping to processing_status='approved' (or a draft status
+  // flipping away from approved) triggers a refetch. Cheap — limit(500) with
+  // an inner join. Refetch model keeps the join logic in one place.
+  useEffect(() => {
+    if (user?.role !== "analyst" && user?.role !== "manager") return;
+    const channel = supabase
+      .channel("approved-sessions-sync")
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "sessions" },
+        () => {
+          fetchApprovedSessions(user.role);
+        }
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "session_drafts" },
+        () => {
+          fetchApprovedSessions(user.role);
+        }
+      )
+      .subscribe();
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [user?.role, fetchApprovedSessions]);
 
   // ─── Realtime: task_queue (keep processingDemoIds in sync) ──────
   useEffect(() => {
@@ -718,6 +781,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         approveDraft,
         rejectDraft,
         processingDemoIds,
+        approvedSessions,
         stats,
       }}
     >

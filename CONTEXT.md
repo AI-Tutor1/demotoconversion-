@@ -39,6 +39,17 @@ Both live in `supabase/migrations/20260416000102_upsert_rpcs.sql` and use `SECUR
 | `POST /api/v1/sessions/{id}/process-recording` | auth + role ∈ {analyst, manager} + session exists + recording_link valid | `task_queue` has running task OR `session_drafts` has `pending_review` row |
 | `POST /api/v1/sessions/{id}/analyze` | auth + role + session exists + transcript not empty | same |
 
+### Session ↔ profile linkage (2026-04-17)
+
+Every row in `sessions` carries four denormalized identity columns — `teacher_user_id`, `teacher_user_name`, `student_user_id`, `student_user_name` — populated from `enrollments` via the `trg_populate_session_user_fields` BEFORE INSERT/UPDATE trigger (migration `20260417000100_sessions_user_linkage.sql`). These exist so downstream profile pages can filter sessions cheaply without re-joining to `enrollments`.
+
+**Surfacing after approval.** Once an analyst approves a session draft (`processing_status = 'approved'` AND `session_drafts.status IN ('approved','partially_edited')`), the session becomes visible on:
+
+- **`/teachers` → drill-down → Product log tab** (today) — filtered by `teacher_user_name`.
+- **`/students/[id]`** (future) — same component, filtered by `student_user_id`.
+
+The shared UI is `components/teacher-product-log.tsx`, fed by `useStore().approvedSessions`. Visibility is analyst + manager only (matches sessions RLS). If `enrollments.teacher_name` is later edited, existing session rows keep their snapshot — intentional; a cascade is documented as a known caveat in MEMORY.md.
+
 ### Backend auth — ES256 + JWKS
 
 `backend/app/auth.py` verifies user tokens using the project's public JWKS at `{SUPABASE_URL}/auth/v1/.well-known/jwks.json`. The previous assumption of HS256 + shared `JWT Secret` was wrong for this project (projects created Apr 2026+ use asymmetric ES256 by default). See `memory/feedback_supabase_jwt_alg.md` for the rule.

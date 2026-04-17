@@ -3,7 +3,13 @@
  * Follows the same pattern as lib/transforms.ts for demos.
  */
 
-import type { Enrollment, Session } from "@/lib/types";
+import type {
+  ApprovedSession,
+  DemoDraftStatus,
+  DraftData,
+  Enrollment,
+  Session,
+} from "@/lib/types";
 
 // ─── Enrollment DB row shape ────────────────────────────────
 interface EnrollmentRow {
@@ -62,8 +68,21 @@ interface SessionRow {
   recording_link: string;
   transcript: string | null;
   processing_status: string;
+  teacher_user_id: string | null;
+  teacher_user_name: string | null;
+  student_user_id: string | null;
+  student_user_name: string | null;
   created_at: string;
   updated_at: string;
+}
+
+// Joined session + draft row returned from the approved-sessions query.
+interface ApprovedSessionRow extends SessionRow {
+  session_drafts: {
+    draft_data: DraftData;
+    status: DemoDraftStatus;
+    reviewed_at: string | null;
+  }[];
 }
 
 export function dbRowToEnrollment(row: EnrollmentRow): Enrollment {
@@ -124,7 +143,29 @@ export function dbRowToSession(row: SessionRow): Session {
     recordingLink: row.recording_link ?? "",
     transcript: row.transcript ?? null,
     processingStatus: (row.processing_status ?? "pending") as Session["processingStatus"],
+    teacherUserId: row.teacher_user_id ?? null,
+    teacherUserName: row.teacher_user_name ?? null,
+    studentUserId: row.student_user_id ?? null,
+    studentUserName: row.student_user_name ?? null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+  };
+}
+
+// Merge a session row with its approved draft into one flat record for /teachers + /students.
+// Picks the most recent approved draft when multiple exist.
+export function dbRowToApprovedSession(row: ApprovedSessionRow): ApprovedSession | null {
+  const draft = row.session_drafts?.[0];
+  if (!draft) return null;
+  const base = dbRowToSession(row);
+  return {
+    ...base,
+    scorecardTotal: draft.draft_data?.total_score ?? 0,
+    scoreInterpretation: draft.draft_data?.score_interpretation ?? "",
+    pourIssues: draft.draft_data?.pour_issues ?? [],
+    overallSummary: draft.draft_data?.overall_summary ?? "",
+    improvementSuggestions: draft.draft_data?.improvement_suggestions ?? "",
+    reviewedAt: draft.reviewed_at,
+    draftStatus: draft.status,
   };
 }

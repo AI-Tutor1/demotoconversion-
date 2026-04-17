@@ -68,6 +68,19 @@ If step 3 references anything added in step 1 or 2, steps 1 + 2 MUST be deployed
 
 **The smoke script enforces this.** `scripts/smoke.sh` probes every `supabase.rpc()` called from frontend code against the live DB; it fails loudly if any called function isn't deployed.
 
+## Before You Deploy — local `:3000` first, always
+
+**Rule**: No change goes to Vercel / Render / the production domain until it has been verified end-to-end on `http://localhost:3000` against the live DB, as each relevant role.
+
+Sequence, non-negotiable:
+
+1. Apply migrations (`supabase/migrations/`) to the prod project.
+2. `./scripts/smoke.sh` passes.
+3. `npm run dev` on :3000 — walk the affected flows as analyst / manager / sales. Open the browser console; confirm zero errors. Confirm role-gated UI, realtime reactivity, and the obvious negative cases (missing data, wrong role, typos).
+4. Only then push to `main`.
+
+Build-green ≠ prod-ready. Full details + symptoms of past breakage in [DEPLOY.md](DEPLOY.md) and `memory/feedback_local_before_domain.md`.
+
 ## Before You Commit
 
 **Single command:** `./scripts/smoke.sh`
@@ -124,7 +137,8 @@ UNDERSTAND → LOCATE → PLAN → IMPLEMENT → VERIFY → REPORT
 │   ├── toast-confirm.tsx         # Toast + confirm modal
 │   ├── csv-upload.tsx            # Reusable CSV file upload button
 │   ├── session-status-badge.tsx  # Processing status badge (pending/processing/scored/approved/failed)
-│   └── session-draft-review.tsx  # Session QA scorecard review (8-question, approve/reject)
+│   ├── session-draft-review.tsx  # Session QA scorecard review (8-question, approve/reject)
+│   └── teacher-product-log.tsx   # Approved sessions list for a teacher (shared with future /students/[id])
 ├── lib/
 │   ├── types.ts                  # Demo type, design tokens, lookup arrays
 │   ├── utils.ts                  # Helper functions
@@ -165,6 +179,7 @@ UNDERSTAND → LOCATE → PLAN → IMPLEMENT → VERIFY → REPORT
 | `lib/csv-parser.ts` | CSV parse + column mapping | When touching CSV upload flow |
 | `lib/review-transforms.ts` | Enrollment/session DB transforms | When changing enrollment/session schema |
 | `components/session-draft-review.tsx` | Session scorecard review | When modifying session approval flow |
+| `components/teacher-product-log.tsx` | Approved-sessions list (per teacher or student) | When changing /teachers Product log or building /students/[id] |
 | `app/globals.css` | All CSS classes | When adding new CSS |
 | `supabase/migrations/` | Schema history | When changing DB shape |
 
@@ -174,9 +189,10 @@ All shared state lives in `lib/store.tsx` (React Context). Every page accesses i
 
 ```tsx
 const {
-  demos,           // Full demo array (source of truth, synced with Supabase)
-  setDemos,        // Wrapped setter — diff + batched Supabase write + rollback
-  rangedDemos,     // demos filtered by global date range
+  demos,             // Full demo array (source of truth, synced with Supabase)
+  setDemos,          // Wrapped setter — diff + batched Supabase write + rollback
+  rangedDemos,       // demos filtered by global date range
+  approvedSessions,  // Approved product-review sessions joined to their scorecard (analyst/manager only)
   stats,           // Computed: { total, converted, pending, notConv, rate, avgR, pourRate }
   flash,           // flash("Message") — toast for 3.5s
   logActivity,     // logActivity("converted", "Maryam", "Ahmed Khan")
@@ -187,6 +203,17 @@ const {
   user,            // { id, email, role, full_name } | null
 } = useStore();
 ```
+
+### Data-model invariant — entities are loosely coupled
+
+**A teacher can have demos with no sessions, sessions with no demos, both, or neither. Same for students.** The demo pipeline and the product-review (session) pipeline are independent data flows that happen to share the same humans. Any page, query, component, or aggregation that references teachers or students MUST:
+
+- Never assume a teacher appears in `demos` just because they exist in `sessions` (and vice versa). The `/teachers` page learned this the hard way — its grid was built only from demos, so teachers with approved sessions but zero demos were unreachable. Fixed by unioning sources via the `TEACHERS` roster lookup ([app/teachers/page.tsx:23-44](app/teachers/page.tsx#L23-L44)).
+- Build primary groupings from the **union** of all entity sources that can carry the teacher/student name, not from one source.
+- Resolve a teacher's tid from name via the `TEACHERS` array in [lib/types.ts](lib/types.ts) when joining across `demos` ↔ `sessions` ↔ `enrollments` (different ID spaces — see `memory/project_session_to_profile_linkage.md`).
+- Render empty-KPI cards gracefully for entities that exist in one source only — never crash, never silently hide.
+
+The same invariant applies to the future `/students/[id]`: a student may have many sessions and zero demos, or vice versa.
 
 ### Store rules
 - Pages use `rangedDemos` for display, `demos` only for mutations

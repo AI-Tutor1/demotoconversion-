@@ -4,8 +4,9 @@ import { useStore } from "@/lib/store";
 import Link from "next/link";
 import { Stars, StatusBadge, EmptyState } from "@/components/ui";
 import { TeacherScorecard } from "@/components/teacher-scorecard";
+import { TeacherProductLog } from "@/components/teacher-product-log";
 import { SearchableSelect } from "@/components/searchable-select";
-import { LIGHT_GRAY, MUTED, BLUE, NEAR_BLACK } from "@/lib/types";
+import { LIGHT_GRAY, MUTED, BLUE, NEAR_BLACK, TEACHERS } from "@/lib/types";
 import { initials } from "@/lib/utils";
 import { isFinalized } from "@/lib/scorecard";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from "recharts";
@@ -13,10 +14,11 @@ import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from "recha
 type TabKey = "dashboard" | "product" | "demos" | "reviews";
 
 export default function TeachersPage() {
-  const { rangedDemos: demos, draftsByDemoId } = useStore();
+  const { rangedDemos: demos, draftsByDemoId, user, approvedSessions } = useStore();
   const [sortBy, setSortBy] = useState("rate-desc");
   const [drill, setDrill] = useState<string | null>(null);
   const [tab, setTab] = useState<TabKey>("dashboard");
+  const canSeeProductLog = user?.role === "analyst" || user?.role === "manager";
 
   const tStats = useMemo(() => {
     // Key by tid (uid) so two teachers who share a name but have different
@@ -31,6 +33,24 @@ export default function TeachersPage() {
       if (d.pour.length > 0) t.pours++; d.pour.forEach((p) => { t.pourCats[p.cat] = (t.pourCats[p.cat] || 0) + 1; });
       t.demos.push(d);
     });
+
+    // Also surface teachers who only have approved *sessions* (no demos yet) by
+    // adding a zero-KPI card — otherwise their Product log would be unreachable.
+    // Name-based lookup into the TEACHERS roster to resolve tid; skip if unknown.
+    if (canSeeProductLog) {
+      const nameToTid = new Map(TEACHERS.map((t) => [t.name.toLowerCase(), t.uid]));
+      const seenNames = new Set<string>();
+      approvedSessions.forEach((s) => {
+        const nm = (s.teacherUserName ?? "").trim();
+        if (!nm || seenNames.has(nm.toLowerCase())) return;
+        seenNames.add(nm.toLowerCase());
+        const tid = nameToTid.get(nm.toLowerCase());
+        if (!tid) return;
+        const key = String(tid);
+        if (!m[key]) m[key] = { name: nm, tid, total: 0, conv: 0, ratings: [], pours: 0, pourCats: {}, demos: [] };
+      });
+    }
+
     let arr = Object.entries(m).map(([, s]) => ({ ...s, avg: s.ratings.length ? (s.ratings.reduce((a, b) => a + b, 0) / s.ratings.length).toFixed(1) : "0", rate: s.total ? Math.round((s.conv / s.total) * 100) : 0 }));
     if (sortBy === "rate-desc") arr.sort((a, b) => b.rate - a.rate);
     if (sortBy === "rate-asc") arr.sort((a, b) => a.rate - b.rate);
@@ -38,7 +58,7 @@ export default function TeachersPage() {
     if (sortBy === "volume-desc") arr.sort((a, b) => b.total - a.total);
     if (sortBy === "name") arr.sort((a, b) => a.name.localeCompare(b.name));
     return arr;
-  }, [demos, sortBy]);
+  }, [demos, sortBy, approvedSessions, canSeeProductLog]);
 
   // drill holds the tid string (unique per teacher) rather than the name.
   const drillData = drill ? tStats.find((t) => String(t.tid) === drill) : null;
@@ -117,7 +137,7 @@ export default function TeachersPage() {
               <div style={{ display: "flex", gap: 4, marginBottom: 20 }}>
                 {([
                   { key: "dashboard" as const, label: "Dashboard" },
-                  { key: "product"   as const, label: "Product log" },
+                  ...(canSeeProductLog ? [{ key: "product" as const, label: "Product log" }] : []),
                   { key: "demos"     as const, label: "Demo logs" },
                   { key: "reviews"   as const, label: "Reviews" },
                 ]).map((t) => (
@@ -183,11 +203,9 @@ export default function TeachersPage() {
                 </div>
               )}
 
-              {/* Tab 2: Product log */}
-              {tab === "product" && (
-                <div>
-                  <EmptyState text="Product flow not yet started. Analytics will appear here once the product pipeline is active." />
-                </div>
+              {/* Tab 2: Product log — approved session scorecards for this teacher */}
+              {tab === "product" && canSeeProductLog && (
+                <TeacherProductLog teacherUserName={drillData.name} />
               )}
 
               {/* Tab 3: Demo logs */}

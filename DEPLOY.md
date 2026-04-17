@@ -8,6 +8,35 @@ Total time: **~30 minutes** if you follow the order.
 
 ---
 
+## 🚦 Pre-deploy gate — NEVER skip
+
+Before pushing any change to Vercel / Render / the production domain, **every single change MUST pass on `http://localhost:3000` first**. No exceptions.
+
+Run this loop on every change, in order:
+
+1. **Supabase** — all migrations in `supabase/migrations/` are applied to the production project. Check with:
+   ```bash
+   # From supabase dashboard or via MCP list_migrations — on-disk files must match applied migrations
+   ls supabase/migrations/ | sort
+   ```
+   If an on-disk migration isn't applied, the frontend will 404 at runtime (see CLAUDE.md "Deploy Contract"). Apply it before you push.
+
+2. **Smoke** — `./scripts/smoke.sh` ends with `✅ smoke passed`. This gates Four Laws + `npm run build` + RPC manifest + backend contract.
+
+3. **Local dev server** — `npm run dev` on :3000. **Visually walk the affected pages as each relevant role** (analyst / manager / sales). Confirm:
+   - The change renders without errors in the browser console.
+   - Role-gated behavior matches expectations (tabs hidden, RPCs blocked, redirects correct).
+   - Any new realtime subscription propagates between two tabs within ~2s.
+   - Edge / negative cases you think of — missing data, wrong role, typo'd inputs — don't crash.
+
+4. **Only after 1–3 pass** — push to `main`. Vercel + Render auto-redeploy.
+
+**Why this rule exists.** Build-green ≠ prod-ready (see MEMORY.md `feedback_never_ship_unverified_integration.md`). The smoke script catches static issues; it does not catch RLS gaps, a missing card on a drill-down page, a component that assumes a role, or a realtime channel that isn't wired. Only the browser at :3000 catches those.
+
+**Violations have cost us production time before.** Do not deploy on trust.
+
+---
+
 ## ⚠️ One critical decision before you start
 
 Render's **free tier sleeps after 15 min of inactivity**. A session ingest (download + Whisper + analyst) can take **5–15 min end-to-end** as a FastAPI background task. If the backend sleeps with an ingest in flight, that ingest **dies**, the session is left in `processing`, and only a manual Retry click will recover it.
@@ -118,7 +147,7 @@ If anything 500s: Render → Logs tab (live backend errors), Vercel → Deployme
 
 ## Ongoing
 
-- **Every push to `main`** → both Vercel and Render auto-redeploy. No action needed.
+- **Every push to `main`** → both Vercel and Render auto-redeploy. **But the pre-deploy gate above must pass on :3000 first.** Auto-deploy is not a substitute for local verification.
 - **Secrets rotation**: update in Render and Vercel UIs separately. Neither reads from the repo.
 - **Custom domain**: add on Vercel first (they issue a TLS cert via Let's Encrypt), then update `FRONTEND_ORIGINS` on Render.
 - **Promoting to Starter**: Render → service → Settings → Instance Type → Starter. No code change needed.

@@ -72,7 +72,7 @@ npm run build      # production TypeScript check + bundle
 | State | React Context (`lib/store.tsx`) wired to Supabase |
 | Database | Supabase (Postgres + Auth + Realtime) |
 | Auth | `@supabase/ssr` (cookie-based, SSR-safe) |
-| Product Review | Enrollment + Session CSV upload → AI scorecard (same 8-Q framework) |
+| Product Review | Enrollment + Session CSV upload → AI scorecard (same 8-Q framework) → approved scorecards surface on `/teachers` Product log |
 | Deployment (planned) | Vercel (frontend) + Supabase Cloud |
 
 Dependencies are minimal: `next`, `react`, `react-dom`, `recharts`, `@supabase/supabase-js`, `@supabase/ssr`. No state manager, no component library, no date library, no CSS framework — see MEMORY.md Part 6 for rejected approaches.
