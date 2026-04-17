@@ -74,6 +74,27 @@ function cleanId(v: string): string {
 }
 
 /**
+ * Normalize an LMS boolean export to "" | "true" | "false" for a Postgres
+ * NULLIF(...)::boolean cast. The LMS mixes conventions:
+ *   - "Yes" / "No" / "true" / "false" / "1" / "0"   → standard booleans
+ *   - "Unknown" / "N/A" / ""                         → attendance unclear → NULL
+ *   - A student's name (e.g. "Ayesha")               → that student attended → true
+ * Anything that isn't a recognized negative or an "unknown" sentinel is treated
+ * as attended (true). Empty / Unknown are coalesced to "" so the cast becomes NULL.
+ */
+function cleanBoolean(v: string): string {
+  const t = cleanNA(v);
+  if (!t) return "";
+  const s = t.toLowerCase();
+  if (s === "unknown") return "";
+  if (["yes", "y", "true", "t", "1"].includes(s)) return "true";
+  if (["no", "n", "false", "f", "0"].includes(s)) return "false";
+  // Non-empty, non-standard value (typically a student's name written by the
+  // LMS when that student attended a multi-student session) → count as attended.
+  return "true";
+}
+
+/**
  * Parse the LMS "Enrollment Name" field (only present in the log CSV).
  * Format: "{student}/{teacher} - | {curriculum} | {board} | {grade} | {subject}"
  */
@@ -189,7 +210,10 @@ export function mapSessionRow(
     // so the FK to enrollments (stored as bare integer strings) matches.
     session_id: cleanId(row["sessionid"] ?? row["session_id"] ?? ""),
     enrollment_id: cleanId(row["enrollmentid"] ?? row["enrollment_id"] ?? ""),
-    scheduled_time: row["scheduledtimeforsession"] ?? row["scheduled_time"] ?? row["scheduledtime"] ?? "",
+    // "N/A" is the LMS sentinel for "not yet scheduled". parseTimestamp
+    // normalizes any recognized datetime to ISO; anything unparseable → ""
+    // so the RPC's NULLIF(..., '')::timestamptz resolves to NULL.
+    scheduled_time: parseTimestamp(row["scheduledtimeforsession"] ?? row["scheduled_time"] ?? row["scheduledtime"] ?? ""),
     tutor_name: row["tutorname"] ?? row["tutor_name"] ?? "",
     expected_student_1: row["expectedstudent1"] ?? row["expected_student_1"] ?? "",
     expected_student_2: row["expectedstudent2"] ?? row["expected_student_2"] ?? "",
@@ -210,8 +234,10 @@ export function mapSessionRow(
     session_date: parseDate(row["date"] ?? row["sessiondate"] ?? row["session_date"] ?? ""),
     class_status: row["classstatus"] ?? row["class_status"] ?? "",
     notes: row["notes"] ?? "",
-    attended_student_1: row["attendedstudent1"] ?? row["attended_student_1"] ?? "",
-    attended_student_2: row["attendedstudent2"] ?? row["attended_student_2"] ?? "",
+    // LMS writes "Unknown" when attendance is unclear and a student's name
+    // when that student attended. cleanBoolean maps both to proper booleans / NULL.
+    attended_student_1: cleanBoolean(row["attendedstudent1"] ?? row["attended_student_1"] ?? ""),
+    attended_student_2: cleanBoolean(row["attendedstudent2"] ?? row["attended_student_2"] ?? ""),
     teacher_transaction_1: row["teachertransaction1"] ?? row["teacher_transaction_1"] ?? "",
     student_transaction_1: row["studenttransaction1"] ?? row["student_transaction_1"] ?? "",
     student_transaction_2: row["studenttransaction2"] ?? row["student_transaction_2"] ?? "",
