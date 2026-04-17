@@ -1,10 +1,84 @@
 # Deploy Guide
 
-**Targets**: Vercel (Next.js frontend) + Render (FastAPI backend). Supabase is already hosted — no DB deploy.
+## Production today — VPS (Hostinger / Ubuntu 24.04)
 
-**End state**: `https://<project>.vercel.app` → talks to `https://<project>-backend.onrender.com` → talks to Supabase.
+Production lives at **`https://product.talimatedu.com`**, served from a single Ubuntu VPS fronted by **nginx**, with both the Next.js frontend and the FastAPI backend managed by **pm2**. Supabase is shared between local dev and prod.
 
-Total time: **~30 minutes** if you follow the order.
+```
+Browser
+  │   https://product.talimatedu.com
+  ▼
+nginx (Ubuntu 24.04, root:root)
+  ├─► pm2 process "frontend"  → next start on :3000   (cwd /var/www/app)
+  └─► pm2 process "backend"   → uvicorn on :8000      (cwd /var/www/app/backend)
+       │
+       ▼
+  Supabase (shared with local dev)
+```
+
+**Box**: `root@72.61.195.234` (password auth; no SSH key installed on the Mac today — save the password in your password manager).
+
+**Hostname**: `srv1529089`.
+
+### Deploy a change (frontend)
+
+Every deploy is manual. There is **no webhook** between GitHub and the VPS — pushing to `main` does not update prod on its own. After `git push origin main`:
+
+```bash
+# From your Mac
+ssh root@72.61.195.234
+
+# On the VPS
+cd /var/www/app
+git pull origin main
+npm install           # near-instant if package.json unchanged
+npm run build         # ~60–120s; ✓ Compiled successfully must appear
+pm2 restart frontend
+sleep 3
+pm2 logs frontend --lines 40 --nostream
+exit
+```
+
+Confirm from your Mac:
+
+```bash
+# /login ETag doesn't change for static routes you didn't edit —
+# probe a bundle hash from the build output instead:
+curl -s https://product.talimatedu.com/login | grep -oE '_next/static/chunks/[a-z0-9-]+\.js' | sort -u
+# The chunk names must match the hashes printed in `npm run build`.
+```
+
+### Deploy a change (backend)
+
+```bash
+ssh root@72.61.195.234
+cd /var/www/app/backend
+git pull origin main   # if the change is in backend/ only; otherwise skip (pulled by frontend already)
+source .venv/bin/activate && pip install -r requirements.txt && deactivate
+pm2 restart backend
+pm2 logs backend --lines 40 --nostream
+exit
+```
+
+### Migrations
+
+Apply to Supabase **before** the `npm run build` step — the frontend assumes the new schema the moment it boots. Use the Supabase MCP `apply_migration` tool (from this repo's Claude sessions) or the Supabase dashboard SQL editor. Verify with `execute_sql` probes. Full rule: CLAUDE.md § "Before You Deploy" and `memory/feedback_local_before_domain.md`.
+
+### When it breaks
+
+| Symptom | Likely cause | Fix |
+|---|---|---|
+| `npm run build` fails on a TypeScript error | VPS Node version ≠ local | Check `node --version` on the VPS; match locally before trying again |
+| `pm2 restart frontend` restarts but page still shows old code | Browser cached aggressively (nginx sets `s-maxage=31536000`) | Hard-refresh in browser; CDN cache may take a minute |
+| `Failed to find Server Action "x"` in `pm2 logs` | A browser held a stale Server Action ID through the rebuild | Cosmetic — that tab reloads and the error stops |
+| `502 Bad Gateway` at the domain | One of the pm2 processes crashed | `pm2 logs` to identify; `pm2 restart <name>` |
+| New migration applied but frontend still reads old columns | Vercel/CDN cache | Hard-refresh; if persistent, `pm2 restart frontend` to evict next's in-memory query plan |
+
+---
+
+## Historical: Vercel + Render (not in use)
+
+The Vercel (frontend) + Render (FastAPI) path below is the ORIGINAL deploy target documented by commit `887d65f`. It has been superseded by the VPS. Keep for reference — **do not use unless you're provisioning a fresh deploy and intentionally abandoning the VPS**. If you do switch back, update the §Production today section above in the same commit.
 
 ---
 
