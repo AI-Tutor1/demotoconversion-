@@ -12,10 +12,13 @@ const NAV_ITEMS: { label: string; href: string; roles?: ("analyst" | "sales_agen
   { label: "Dashboard", href: "/" },
   { label: "Analyst",   href: "/analyst",   roles: ["analyst", "manager"] },
   { label: "Drafts",    href: "/drafts",    roles: ["analyst", "manager"] },
-  { label: "Sales",     href: "/sales",     roles: ["sales_agent", "manager"] },
+  { label: "Sales",      href: "/sales",      roles: ["sales_agent", "manager"] },
+  { label: "Conducted",  href: "/conducted" },
   { label: "Kanban",    href: "/kanban" },
   { label: "Analytics", href: "/analytics" },
   { label: "Teachers",  href: "/teachers" },
+  { label: "Enrollments", href: "/enrollments", roles: ["analyst", "manager"] },
+  { label: "Sessions",    href: "/sessions",    roles: ["analyst", "manager"] },
 ];
 
 export default function Nav() {
@@ -94,7 +97,7 @@ export default function Nav() {
           </svg>
 
           {/* Nav links (filtered to current user's role) */}
-          <div style={{ display: "flex", alignItems: "center", flex: 1, overflow: "auto" }}>
+          <div style={{ display: "flex", alignItems: "center", flex: 1, overflow: "auto", scrollbarWidth: "none" }}>
             {NAV_ITEMS.filter(
               (item) => !item.roles || (user && item.roles.includes(user.role))
             ).map((item) => (

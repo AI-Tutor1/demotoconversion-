@@ -71,20 +71,37 @@ export function createSupabaseSync({ setDemosRaw, flash }: SyncDeps): SyncAPI {
   async function fireInsert(demo: Demo): Promise<void> {
     const hash = `insert:${demo.id}`;
     if (!shouldFire(hash)) return;
-    const { error: demoErr } = await supabase
-      .from("demos")
-      .insert(demoToInsertRow(demo));
-    if (demoErr) {
-      flash(`Save failed: ${demoErr.message}`);
+
+    // Strip demo_id from pourToDbRows output — the RPC receives pure {category,description} pairs.
+    const pourPayload = pourToDbRows(demo.id, demo.pour).map(
+      ({ category, description }) => ({ category, description })
+    );
+
+    const { data, error } = await supabase.rpc("create_demo_with_pour", {
+      demo_payload: demoToInsertRow(demo),
+      pour_payload: pourPayload,
+    });
+
+    if (error) {
+      flash(`Save failed: ${error.message}`);
       setDemosRaw((prev) => prev.filter((d) => d.id !== demo.id));
       return;
     }
-    if (demo.pour.length > 0) {
-      const { error: pourErr } = await supabase
-        .from("pour_issues")
-        .insert(pourToDbRows(demo.id, demo.pour));
-      if (pourErr) flash(`POUR save failed: ${pourErr.message}`);
-    }
+
+    // Reconcile optimistic placeholder id → server-assigned id.
+    // Guard against the rare race where realtime beat us and already inserted
+    // the server-id row — in that case just drop the placeholder.
+    const serverId = data as number;
+    const placeholderId = demo.id;
+    setDemosRaw((prev) => {
+      if (prev.some((d) => d.id === serverId)) {
+        // Realtime already hydrated the real row — drop the placeholder.
+        return prev.filter((d) => d.id !== placeholderId);
+      }
+      return prev.map((d) =>
+        d.id === placeholderId ? { ...d, id: serverId } : d
+      );
+    });
   }
 
   async function fireUpdateGroup(
@@ -123,22 +140,22 @@ export function createSupabaseSync({ setDemosRaw, flash }: SyncDeps): SyncAPI {
   ): Promise<void> {
     const hash = `pour:${demoId}:${JSON.stringify(nextPour)}`;
     if (!shouldFire(hash)) return;
-    const { error: delErr } = await supabase
-      .from("pour_issues")
-      .delete()
-      .eq("demo_id", demoId);
-    if (delErr) {
-      flash(`POUR update failed: ${delErr.message}`);
+
+    // Atomic DELETE + INSERT in one RPC call — no window where the demo has zero issues.
+    const pourPayload = pourToDbRows(demoId, nextPour).map(
+      ({ category, description }) => ({ category, description })
+    );
+
+    const { error } = await supabase.rpc("update_demo_pour", {
+      p_demo_id: demoId,
+      next_pour: pourPayload,
+    });
+
+    if (error) {
+      flash(`POUR update failed: ${error.message}`);
       const prev = prevSnapshot.find((d) => d.id === demoId);
       if (prev)
         setDemosRaw((cur) => cur.map((d) => (d.id === demoId ? prev : d)));
-      return;
-    }
-    if (nextPour.length > 0) {
-      const { error: insErr } = await supabase
-        .from("pour_issues")
-        .insert(pourToDbRows(demoId, nextPour));
-      if (insErr) flash(`POUR insert failed: ${insErr.message}`);
     }
   }
 

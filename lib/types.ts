@@ -27,6 +27,7 @@ export interface Demo {
   tid: number;
   student: string;
   level: string;
+  grade: string;
   subject: string;
   pour: PourIssue[];
   review: string;
@@ -67,6 +68,10 @@ export interface Demo {
   feedbackPositiveEnvComment: string;
   feedbackSuggestions: string;
   feedbackComments: string;
+  // TRUE for demos submitted by a sales agent that are awaiting analyst review.
+  // Excluded from Dashboard KPIs, rangedDemos, Kanban, Analytics, and Teachers.
+  // Flipped to FALSE by the analyst on scorecard approval.
+  isDraft: boolean;
 }
 
 // AI-generated draft output stored in the demo_drafts table.
@@ -117,7 +122,7 @@ export interface ActivityEntry {
   action: string;
   user: string;
   target: string;
-  time: string;
+  ts: number;
 }
 
 export interface Notification {
@@ -327,4 +332,92 @@ export const POUR_CATS = [
   "Resources", "Time", "No Show",
 ];
 
+// Student's grade/year within the program — distinct from `level`
+// (which is the qualification like IGCSE / A-Level / IB).
+export const GRADES = [
+  "Grade 1", "Grade 2", "Grade 3", "Grade 4", "Grade 5", "Grade 6",
+  "Grade 7", "Grade 8", "Grade 9", "Grade 10", "Grade 11", "Grade 12",
+  "Grade 13",
+];
+
 export const ACCT_TYPES = ["Sales", "Product", "Consumer"];
+
+// ─── PRODUCT REVIEW WORKFLOW — ENROLLMENTS & SESSIONS ───
+
+export interface Enrollment {
+  id: number;
+  enrollmentId: string;
+  teacherId: string;
+  studentId: string;
+  teacherName: string;
+  studentName: string;
+  subject: string;
+  grade: string;
+  board: string;
+  curriculum: string;
+  sessionHourlyRate: number | null;
+  tutorHourlyRate: number | null;
+  enrollmentStatus: string;
+  consumerType: string;
+  pauseStarts: string | null;
+  pauseEnds: string | null;
+  isPermanent: boolean;
+  actionBy: string;
+  additionalNotes: string;
+  logId: number | null;
+  logCreatedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type SessionProcessingStatus =
+  | "pending"
+  | "processing"
+  | "scored"
+  | "approved"
+  | "failed";
+
+export interface Session {
+  id: number;
+  sessionId: string;
+  enrollmentId: string;
+  scheduledTime: string | null;
+  tutorName: string;
+  expectedStudent1: string;
+  expectedStudent2: string;
+  subject: string;
+  board: string;
+  grade: string;
+  curriculum: string;
+  enrollmentName: string;
+  tutorClassTime: number | null;
+  tutorScaledClassTime: number | null;
+  classScheduledDuration: number | null;
+  student1ClassTime: number | null;
+  student2ClassTime: number | null;
+  sessionDate: string | null;
+  classStatus: string;
+  notes: string;
+  attendedStudent1: boolean | null;
+  attendedStudent2: boolean | null;
+  teacherTransaction1: string;
+  studentTransaction1: string;
+  studentTransaction2: string;
+  recordingLink: string;
+  transcript: string | null;
+  processingStatus: SessionProcessingStatus;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface SessionDraft {
+  id: string;
+  session_id: number;
+  agent_name: string;
+  draft_data: DraftData;
+  status: DemoDraftStatus;
+  approval_rate: number | null;
+  reviewed_by: string | null;
+  reviewed_at: string | null;
+  created_at: string;
+}

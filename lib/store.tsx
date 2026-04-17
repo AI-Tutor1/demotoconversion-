@@ -21,7 +21,7 @@ import {
 import { SEED_ACTIVITY } from "./data";
 import { inDateRange, ageDays } from "./utils";
 import { supabase } from "./supabase";
-import { dbRowToDemo, type DemoRow } from "./transforms";
+import { dbRowToDemo, demoToInsertRow, pourToDbRows, type DemoRow } from "./transforms";
 import { createSupabaseSync } from "./supabase-sync";
 
 export interface UserProfile {
@@ -46,6 +46,10 @@ export type ProcessRecordingResult =
     }
   | { ok: false; error: string };
 
+export type CreateDemoResult =
+  | { ok: true; id: number }
+  | { ok: false; error: string };
+
 interface StoreContextType {
   demos: Demo[];
   setDemos: React.Dispatch<React.SetStateAction<Demo[]>>;
@@ -53,7 +57,7 @@ interface StoreContextType {
   dateRange: string;
   setDateRange: (range: string) => void;
   activity: ActivityEntry[];
-  logActivity: (action: string, user: string, target: string) => void;
+  logActivity: (action: string, target: string) => void;
   notifications: Notification[];
   toast: string | null;
   flash: (msg: string) => void;
@@ -69,12 +73,14 @@ interface StoreContextType {
   fetchDraft: (demoId: number) => Promise<DemoDraft | null>;
   triggerAnalyze: (demoId: number) => Promise<AnalyzeResult>;
   triggerProcessRecording: (demoId: number) => Promise<ProcessRecordingResult>;
+  createDemo: (demo: Demo) => Promise<CreateDemoResult>;
   approveDraft: (
     draftId: string,
     approvalRate: number,
     status: Extract<DemoDraftStatus, "approved" | "partially_edited">
   ) => Promise<void>;
   rejectDraft: (draftId: string) => Promise<void>;
+  processingDemoIds: Set<number>;
   stats: {
     total: number;
     converted: number;
@@ -101,6 +107,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<UserProfile | null>(null);
   const [salesAgents, setSalesAgents] = useState<UserProfile[]>([]);
   const [drafts, setDrafts] = useState<DemoDraft[]>([]);
+  const [processingDemoIds, setProcessingDemoIds] = useState<Set<number>>(new Set());
 
   const processedRealtimeIds = useRef<Set<number>>(new Set());
   const processedRealtimeDraftIds = useRef<Set<string>>(new Set());
@@ -113,15 +120,22 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const logActivity = useCallback(
-    (action: string, user: string, target: string) => {
+    (action: string, target: string) => {
+      const now = Date.now();
       setActivity((prev) =>
         [
-          { id: Date.now(), action, user, target, time: "Just now" },
+          {
+            id: now,
+            action,
+            user: user?.full_name ?? "System",
+            target,
+            ts: now,
+          },
           ...prev,
         ].slice(0, 20)
       );
     },
-    []
+    [user]
   );
 
   // Sync machinery extracted to lib/supabase-sync.ts. Stable identity across
@@ -176,6 +190,15 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     setDrafts((data as DemoDraft[] | null) ?? []);
   }, []);
 
+  const fetchProcessingDemoIds = useCallback(async () => {
+    const { data } = await supabase
+      .from("task_queue")
+      .select("demo_id")
+      .in("status", ["running", "queued"]);
+    const ids = new Set<number>((data ?? []).map((r: { demo_id: number }) => Number(r.demo_id)));
+    setProcessingDemoIds(ids);
+  }, []);
+
   const syncUserProfile = useCallback(async () => {
     const {
       data: { user: authUser },
@@ -207,18 +230,20 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         fetchDemos();
         syncUserProfile();
         fetchDrafts();
+        fetchProcessingDemoIds();
       } else if (event === "SIGNED_OUT") {
         setDemosRaw([]);
         setUser(null);
         setSalesAgents([]);
         setDrafts([]);
+        setProcessingDemoIds(new Set());
         setLoading(false);
       }
     });
     return () => {
       data.subscription.unsubscribe();
     };
-  }, [fetchDemos, syncUserProfile, fetchDrafts]);
+  }, [fetchDemos, syncUserProfile, fetchDrafts, fetchProcessingDemoIds]);
 
   // Flash reader for middleware route-denied redirects (?denied=<prefix>)
   useEffect(() => {
@@ -369,6 +394,44 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     };
   }, []);
 
+  // ─── Realtime: task_queue (keep processingDemoIds in sync) ──────
+  useEffect(() => {
+    const channel = supabase
+      .channel("task-queue-sync")
+      .on(
+        "postgres_changes",
+        { event: "INSERT", schema: "public", table: "task_queue" },
+        (payload) => {
+          const row = payload.new as unknown as { demo_id: number; status: string };
+          if (row.status === "running" || row.status === "queued") {
+            setProcessingDemoIds((prev) => new Set([...prev, Number(row.demo_id)]));
+          }
+        }
+      )
+      .on(
+        "postgres_changes",
+        { event: "UPDATE", schema: "public", table: "task_queue" },
+        (payload) => {
+          const row = payload.new as unknown as { demo_id: number; status: string };
+          const demoId = Number(row.demo_id);
+          if (row.status === "running" || row.status === "queued") {
+            setProcessingDemoIds((prev) => new Set([...prev, demoId]));
+          } else {
+            // completed / failed — remove from set (re-fetch to confirm no other active tasks for this demo)
+            setProcessingDemoIds((prev) => {
+              const next = new Set(prev);
+              next.delete(demoId);
+              return next;
+            });
+          }
+        }
+      )
+      .subscribe();
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, []);
+
   // ─── Draft operations ─────────────────────────────────────────
   const fetchDraft = useCallback(
     async (demoId: number): Promise<DemoDraft | null> => {
@@ -392,9 +455,14 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const triggerAnalyze = useCallback(
     async (demoId: number): Promise<AnalyzeResult> => {
       try {
+        const { data: sessionData } = await supabase.auth.getSession();
+        const token = sessionData.session?.access_token ?? "";
         const res = await fetch(
           `${AI_BACKEND_URL}/api/v1/demos/${demoId}/analyze`,
-          { method: "POST" }
+          {
+            method: "POST",
+            headers: token ? { Authorization: `Bearer ${token}` } : {},
+          }
         );
         if (!res.ok) {
           let detail = `HTTP ${res.status}`;
@@ -428,9 +496,14 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const triggerProcessRecording = useCallback(
     async (demoId: number): Promise<ProcessRecordingResult> => {
       try {
+        const { data: sessionData } = await supabase.auth.getSession();
+        const token = sessionData.session?.access_token ?? "";
         const res = await fetch(
           `${AI_BACKEND_URL}/api/v1/demos/${demoId}/process-recording`,
-          { method: "POST" }
+          {
+            method: "POST",
+            headers: token ? { Authorization: `Bearer ${token}` } : {},
+          }
         );
         if (!res.ok) {
           let detail = `HTTP ${res.status}`;
@@ -466,6 +539,26 @@ export function StoreProvider({ children }: { children: ReactNode }) {
               : "AI backend not reachable (is the Python server running on :8000?)",
         };
       }
+    },
+    []
+  );
+
+  const createDemo = useCallback(
+    async (demo: Demo): Promise<CreateDemoResult> => {
+      const pourPayload = pourToDbRows(demo.id, demo.pour).map(
+        ({ category, description }) => ({ category, description })
+      );
+      const { data, error } = await supabase.rpc("create_demo_with_pour", {
+        demo_payload: demoToInsertRow(demo),
+        pour_payload: pourPayload,
+      });
+      if (error) {
+        return { ok: false, error: error.message };
+      }
+      const serverId = data as number;
+      // Bypass diff-sync — the DB row already exists. Insert with real server id.
+      setDemosRaw((prev) => [{ ...demo, id: serverId }, ...prev]);
+      return { ok: true, id: serverId };
     },
     []
   );
@@ -518,7 +611,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
   // ─── Derived memos ────────────────────────────────────────────
   const rangedDemos = useMemo(
-    () => demos.filter((d) => inDateRange(d.date, dateRange)),
+    () => demos.filter((d) => !d.isDraft && inDateRange(d.date, dateRange)),
     [demos, dateRange]
   );
 
@@ -621,8 +714,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         fetchDraft,
         triggerAnalyze,
         triggerProcessRecording,
+        createDemo,
         approveDraft,
         rejectDraft,
+        processingDemoIds,
         stats,
       }}
     >

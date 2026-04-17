@@ -9,25 +9,48 @@ LLM call (corrects Phase-3 planning issue #1).
 
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 from dataclasses import dataclass
 from typing import TypedDict
 
-from langchain_anthropic import ChatAnthropic
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+from langchain_openai import ChatOpenAI
 from langgraph.graph import END, START, StateGraph
+from openai import RateLimitError
 from pydantic import ValidationError
 
 from app.config import settings
 from app.models import DraftOutput
 
 AGENT_NAME = "demo_analyst"
-MODEL = "claude-sonnet-4-20250514"
+# Groq Llama 3.3 70B via Groq's OpenAI-compatible endpoint. Chosen for
+# balance of cost, latency (~1-3s for a 2k-token scorecard) and strong
+# structured-JSON fidelity on the scorecard prompt.
+MODEL = "llama-3.3-70b-versatile"
+GROQ_BASE_URL = "https://api.groq.com/openai/v1"
 TEMPERATURE = 0.3
 MAX_TOKENS = 2000
 
-# Strips ```json ... ``` or ``` ... ``` fences Claude occasionally emits despite instructions.
+# Groq free/on_demand tier enforces 12_000 TPM on this model. The scorecard
+# system prompt is ~3k tokens, MAX_TOKENS output is 2k, so the transcript must
+# fit in ~7k tokens. 18_000 chars ≈ 4.5k tokens — well inside the envelope with
+# headroom for the retry path (which sends the full history again).
+MAX_TRANSCRIPT_CHARS = 18_000
+
+# Serialize analyst calls at the process level. Two simultaneous calls against
+# Groq's 12k TPM cap reliably throw 413 "Request too large … rate_limit_exceeded"
+# even when each call on its own would fit. Serializing trades parallel throughput
+# for zero rate-limit thrash.
+_ANALYST_SEMAPHORE = asyncio.Semaphore(1)
+
+# Groq TPM window is 60s; wait the full window before retrying.
+_RATE_LIMIT_BACKOFF_SECONDS = 60.0
+_MAX_RATE_LIMIT_RETRIES = 2
+
+# Strips ```json ... ``` or ``` ... ``` fences the model occasionally emits
+# despite instructions. Keep — Llama has the same habit as Claude here.
 _FENCE_RE = re.compile(r"^\s*```(?:json)?\s*|\s*```\s*$", re.MULTILINE)
 
 SYSTEM_PROMPT = """You are the Session QA Analyst for Tuitional, a tutoring company. You evaluate demo tutoring sessions by scoring a structured QA Scorecard based ONLY on evidence from the transcript.
@@ -202,29 +225,67 @@ def _message_text(response) -> str:
     return content if isinstance(content, str) else str(content)
 
 
-def _make_llm() -> ChatAnthropic:
-    return ChatAnthropic(
+def _make_llm() -> ChatOpenAI:
+    return ChatOpenAI(
         model=MODEL,
         temperature=TEMPERATURE,
         max_tokens=MAX_TOKENS,
-        api_key=settings.anthropic_api_key,
+        api_key=settings.groq_api_key,
+        base_url=GROQ_BASE_URL,
     )
 
 
 # ─── LangGraph node ───────────────────────────────────────────
 
 
+async def _ainvoke_with_rate_limit_retry(llm: ChatOpenAI, messages):
+    """Call the LLM, retrying on Groq TPM rate-limit errors with a 60s backoff
+    (the TPM window). Serialized across the process via _ANALYST_SEMAPHORE
+    so concurrent scorecards don't combine to exceed the per-minute cap."""
+    async with _ANALYST_SEMAPHORE:
+        last_err: Exception | None = None
+        for attempt in range(_MAX_RATE_LIMIT_RETRIES + 1):
+            try:
+                return await llm.ainvoke(messages)
+            except RateLimitError as exc:
+                last_err = exc
+                if attempt >= _MAX_RATE_LIMIT_RETRIES:
+                    break
+                await asyncio.sleep(_RATE_LIMIT_BACKOFF_SECONDS)
+            except Exception as exc:  # noqa: BLE001
+                # Groq emits HTTP 413 with "rate_limit_exceeded" in the body
+                # for token-budget violations — LangChain surfaces that as a
+                # generic exception rather than RateLimitError.
+                if "rate_limit_exceeded" in str(exc).lower() or "request too large" in str(exc).lower():
+                    last_err = exc
+                    if attempt >= _MAX_RATE_LIMIT_RETRIES:
+                        break
+                    await asyncio.sleep(_RATE_LIMIT_BACKOFF_SECONDS)
+                    continue
+                raise
+        raise RuntimeError(
+            f"Analyst rate-limited after {_MAX_RATE_LIMIT_RETRIES + 1} attempts: {last_err}"
+        )
+
+
 async def _analyze_node(state: _AgentState) -> _AgentState:
     llm = _make_llm()
     transcript = state["transcript"]
+
+    # Truncate so a single call can't exceed Groq's 12k TPM cap on its own.
+    # Transcripts over the budget are tail-trimmed (keep the opening and body
+    # of the lesson, drop late content) — the scorecard prompt rewards evidence
+    # throughout, so we preserve timestamps by keeping the chronological head.
+    if len(transcript) > MAX_TRANSCRIPT_CHARS:
+        transcript = transcript[:MAX_TRANSCRIPT_CHARS] + "\n\n[... transcript truncated for analyst budget ...]"
 
     messages = [
         SystemMessage(content=SYSTEM_PROMPT),
         HumanMessage(content=f"Transcript:\n\n{transcript}"),
     ]
 
-    # First attempt
-    first = await llm.ainvoke(messages)
+    # First attempt (with rate-limit retry wrapper)
+    first = await _ainvoke_with_rate_limit_retry(llm, messages)
     first_in, first_out = _tokens(first)
     first_text = _message_text(first)
 
@@ -242,9 +303,9 @@ async def _analyze_node(state: _AgentState) -> _AgentState:
     except (json.JSONDecodeError, ValidationError):
         pass  # fall through to retry
 
-    # Retry with FULL conversation history (corrects planning issue #2).
-    # Without the original system prompt + transcript + Claude's broken attempt
-    # in the message chain, Claude has no context to produce the correct JSON.
+    # Retry with FULL conversation history. Without the original system prompt
+    # + transcript + model's broken first attempt in the chain, the model has
+    # no context to produce the correct JSON.
     retry_messages = [
         *messages,
         AIMessage(content=first_text),
@@ -255,7 +316,7 @@ async def _analyze_node(state: _AgentState) -> _AgentState:
             )
         ),
     ]
-    retry = await llm.ainvoke(retry_messages)
+    retry = await _ainvoke_with_rate_limit_retry(llm, retry_messages)
     retry_in, retry_out = _tokens(retry)
     retry_text = _message_text(retry)
 
@@ -312,8 +373,8 @@ async def run(demo_id: int, transcript: str) -> AgentResult:
         initial call + retry (if any).
 
     Raises:
-        ValueError: if Claude returns unparseable JSON after one retry
-        anthropic errors: propagate if the API call itself fails
+        ValueError: if the model returns unparseable JSON after one retry
+        openai.OpenAIError (via Groq base_url): propagate if the API call itself fails
     """
     del demo_id  # reserved for future logging / tracing; not needed by the graph
     final_state = await _GRAPH.ainvoke(

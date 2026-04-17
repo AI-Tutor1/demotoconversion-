@@ -9,6 +9,7 @@ export type DemoRow = {
   tid: number;
   student: string;
   level: string;
+  grade: string;
   subject: string;
   review: string;
   methodology: string | null;
@@ -51,6 +52,7 @@ export type DemoRow = {
   escalated_at: string | null;
   workflow_stage: string;
   transcript: string | null;
+  is_draft: boolean;
   ai_draft_id: string | null;
   ai_approval_rate: number | null;
   created_at: string;
@@ -73,6 +75,7 @@ export function dbRowToDemo(row: DemoRow): Demo {
     tid: row.tid,
     student: row.student,
     level: row.level,
+    grade: row.grade ?? "",
     subject: row.subject,
     // POUR mapping — DB category/description → App cat/desc
     pour: (row.pour_issues ?? []).map((p) => ({
@@ -102,6 +105,7 @@ export function dbRowToDemo(row: DemoRow): Demo {
     workflowStage: (row.workflow_stage as WorkflowStage) ?? "new",
     salesAgentId: row.sales_agent_id ?? null,
     analystId: row.analyst_id ?? null,
+    isDraft: row.is_draft ?? false,
     feedbackRating: row.feedback_rating ?? 0,
     feedbackExplanation: row.feedback_explanation ?? null,
     feedbackExplanationComment: row.feedback_explanation_comment ?? "",
@@ -128,12 +132,15 @@ function statusToStage(status: Demo["status"]): string {
 
 export function demoToInsertRow(d: Demo): Record<string, unknown> {
   return {
-    id: d.id,
+    // id is intentionally omitted — BIGSERIAL assigns the server-side id.
+    // The caller holds a placeholder id (Date.now()) for optimistic UI only;
+    // supabase-sync reconciles state to the real id after the RPC returns.
     date: d.date,
     teacher: d.teacher,
     tid: d.tid,
     student: d.student,
     level: d.level,
+    grade: d.grade ?? "",
     subject: d.subject,
     review: d.review,
     methodology: d.methodology ?? null,
@@ -157,6 +164,7 @@ export function demoToInsertRow(d: Demo): Record<string, unknown> {
     workflow_stage: d.workflowStage ?? statusToStage(d.status),
     sales_agent_id: d.salesAgentId ?? null,
     analyst_id: d.analystId ?? null,
+    is_draft: d.isDraft ?? false,
     feedback_rating: d.feedbackRating ?? 0,
     feedback_explanation: d.feedbackExplanation,
     feedback_explanation_comment: d.feedbackExplanationComment ?? "",
@@ -182,6 +190,7 @@ export function demoUpdatesToDb(partial: Partial<Demo>): Record<string, unknown>
   if ("tid" in partial) out.tid = partial.tid;
   if ("student" in partial) out.student = partial.student;
   if ("level" in partial) out.level = partial.level;
+  if ("grade" in partial) out.grade = partial.grade ?? "";
   if ("subject" in partial) out.subject = partial.subject;
   if ("review" in partial) out.review = partial.review;
   if ("methodology" in partial) out.methodology = partial.methodology ?? null;
@@ -211,6 +220,7 @@ export function demoUpdatesToDb(partial: Partial<Demo>): Record<string, unknown>
   if ("ts" in partial) out.ts = partial.ts;
   if ("salesAgentId" in partial) out.sales_agent_id = partial.salesAgentId ?? null;
   if ("analystId" in partial) out.analyst_id = partial.analystId ?? null;
+  if ("isDraft" in partial) out.is_draft = partial.isDraft ?? false;
   if ("feedbackRating" in partial) out.feedback_rating = partial.feedbackRating ?? 0;
   if ("feedbackExplanation" in partial) out.feedback_explanation = partial.feedbackExplanation;
   if ("feedbackExplanationComment" in partial) out.feedback_explanation_comment = partial.feedbackExplanationComment ?? "";

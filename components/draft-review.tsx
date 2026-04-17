@@ -8,6 +8,7 @@ import {
   LIGHT_GRAY,
   MUTED,
   NEAR_BLACK,
+  POUR_CATS,
   type Demo,
   type DemoDraft,
   type ScoreEvidence,
@@ -62,7 +63,7 @@ export default function DraftReview({
   draft: DemoDraft;
 }) {
   const router = useRouter();
-  const { setDemos, approveDraft, rejectDraft, logActivity, flash, user } = useStore();
+  const { setDemos, approveDraft, rejectDraft, triggerAnalyze, logActivity, flash } = useStore();
 
   const [values, setValues] = useState<DraftState>(() => ({
     q1_teaching_methodology:    { ...draft.draft_data.q1_teaching_methodology },
@@ -121,7 +122,12 @@ export default function DraftReview({
   );
 
   const submit = async () => {
-    if (!allDecided || submitting) return;
+    if (submitting) return;
+    if (!allDecided) {
+      const undecided = ALL_KEYS.filter((k) => states[k] === "untouched").length;
+      flash(`${undecided} field${undecided === 1 ? "" : "s"} still need Accept or Edit before submitting.`);
+      return;
+    }
     setSubmitting(true);
     try {
       // Map scorecard → flat demo columns (keeping scorecard itself in demo_drafts JSONB).
@@ -135,6 +141,13 @@ export default function DraftReview({
                 suggestions: values.improvement_suggestions,
                 improvement: values.improvement_focus,
                 analystRating: totalToAnalystRating(totalScore),
+                // Flip draft flag — demo is now fully reviewed and enters
+                // the main pipeline (Dashboard, Kanban, Analytics, Teachers).
+                isDraft: false,
+                // Only advance the workflow if sales hasn't moved it yet —
+                // re-editing after sales follow-up must not clobber their stage.
+                workflowStage:
+                  d.status === "Pending" ? "pending_sales" : d.workflowStage,
               }
             : d
         )
@@ -143,11 +156,10 @@ export default function DraftReview({
       await approveDraft(draft.id, approvalRate, finalStatus);
       logActivity(
         "reviewed AI scorecard",
-        user?.full_name ?? "Analyst",
         `${demo.student} — ${totalScore}/32 ${badge.label}`
       );
       flash("Scorecard submitted — demo updated");
-      router.push("/");
+      router.push("/drafts");
     } finally {
       setSubmitting(false);
     }
@@ -158,15 +170,37 @@ export default function DraftReview({
     setSubmitting(true);
     try {
       await rejectDraft(draft.id);
-      logActivity("rejected AI scorecard", user?.full_name ?? "Analyst", demo.student);
+      logActivity("rejected AI scorecard", demo.student);
       flash("AI draft rejected — writing review manually");
+      // Pass tid alongside teacher name — tid disambiguates same-name teachers
+      // (e.g. two "Muhammad Ebraheem" rows); teacher kept for display fallback.
       const params = new URLSearchParams({
         student: demo.student,
         teacher: demo.teacher,
+        tid: String(demo.tid),
         level: demo.level,
         subject: demo.subject,
       });
       router.push(`/analyst?${params.toString()}`);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const onRedo = async () => {
+    if (submitting) return;
+    setSubmitting(true);
+    try {
+      await rejectDraft(draft.id);
+      logActivity("requested AI redo", demo.student);
+      flash("Regenerating AI draft — check the queue shortly...");
+      // Fire-and-forget — navigate immediately, don't wait for AI
+      triggerAnalyze(demo.id).then((result) => {
+        if (!result.ok) {
+          flash(`AI redo failed: ${result.error}`);
+        }
+      });
+      router.push("/drafts");
     } finally {
       setSubmitting(false);
     }
@@ -475,22 +509,63 @@ export default function DraftReview({
                 </div>
               )
             ) : (
-              <textarea
-                className="apple-input apple-textarea"
-                style={{ fontSize: 13, minHeight: 80 }}
-                placeholder='Edit as JSON: [{"category":"Video","description":"..."}]'
-                value={JSON.stringify(values.pour_issues)}
-                onChange={(e) => {
-                  try {
-                    const parsed = JSON.parse(e.target.value);
-                    if (Array.isArray(parsed)) {
-                      setValues((prev) => ({ ...prev, pour_issues: parsed }));
-                    }
-                  } catch {
-                    // swallow until user types valid JSON
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                {values.pour_issues.map((issue, i) => (
+                  <div key={i} style={{ display: "grid", gridTemplateColumns: "140px 1fr auto", gap: 8, alignItems: "center" }}>
+                    <select
+                      className="apple-input"
+                      value={issue.category}
+                      onChange={(e) => {
+                        const updated = values.pour_issues.map((p, j) =>
+                          j === i ? { ...p, category: e.target.value } : p
+                        );
+                        setValues((prev) => ({ ...prev, pour_issues: updated }));
+                      }}
+                    >
+                      {POUR_CATS.map((c) => (
+                        <option key={c} value={c}>{c}</option>
+                      ))}
+                    </select>
+                    <input
+                      className="apple-input"
+                      style={{ fontSize: 13 }}
+                      placeholder="Describe the issue..."
+                      value={issue.description}
+                      onChange={(e) => {
+                        const updated = values.pour_issues.map((p, j) =>
+                          j === i ? { ...p, description: e.target.value } : p
+                        );
+                        setValues((prev) => ({ ...prev, pour_issues: updated }));
+                      }}
+                    />
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setValues((prev) => ({
+                          ...prev,
+                          pour_issues: prev.pour_issues.filter((_, j) => j !== i),
+                        }))
+                      }
+                      style={{ fontSize: 18, color: MUTED, background: "none", border: "none", cursor: "pointer", padding: "0 6px", lineHeight: 1 }}
+                    >
+                      ×
+                    </button>
+                  </div>
+                ))}
+                <button
+                  type="button"
+                  className="pill pill-outline"
+                  style={{ alignSelf: "flex-start", fontSize: 13, padding: "6px 14px" }}
+                  onClick={() =>
+                    setValues((prev) => ({
+                      ...prev,
+                      pour_issues: [...prev.pour_issues, { category: POUR_CATS[0], description: "" }],
+                    }))
                   }
-                }}
-              />
+                >
+                  + Add issue
+                </button>
+              </div>
             )}
           </div>
         </div>
@@ -512,20 +587,34 @@ export default function DraftReview({
             gap: 12,
           }}
         >
-          <button
-            type="button"
-            onClick={onReject}
-            className="pill pill-outline"
-            style={{
-              padding: "10px 22px",
-              fontSize: 14,
-              color: "#c13030",
-              borderColor: "#c13030",
-            }}
-            disabled={submitting}
-          >
-            Reject draft
-          </button>
+          <div style={{ display: "flex", gap: 8 }}>
+            <button
+              type="button"
+              onClick={onReject}
+              className="pill pill-outline"
+              style={{
+                padding: "10px 22px",
+                fontSize: 14,
+                color: "#c13030",
+                borderColor: "#c13030",
+              }}
+              disabled={submitting}
+            >
+              Reject draft
+            </button>
+            <button
+              type="button"
+              onClick={onRedo}
+              className="pill pill-outline"
+              style={{
+                padding: "10px 22px",
+                fontSize: 14,
+              }}
+              disabled={submitting}
+            >
+              Redo — regenerate
+            </button>
+          </div>
           <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
             <span style={{ fontSize: 13, color: MUTED }}>
               {Math.round(approvalRate * 100)}% accepted

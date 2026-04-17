@@ -1,5 +1,6 @@
 "use client";
 import { useState, useMemo } from "react";
+import { useRouter } from "next/navigation";
 import { useStore } from "@/lib/store";
 import { Stars, EmptyState } from "@/components/ui";
 import { LIGHT_GRAY, MUTED, BLUE, type WorkflowStage } from "@/lib/types";
@@ -8,7 +9,7 @@ import { interpretationBadge, isFinalized } from "@/lib/scorecard";
 
 const KCOLS: { key: string; label: string; color: string; stage: WorkflowStage; status: "Pending" | "Converted" | "Not Converted" }[] = [
   { key: "new",       label: "New",           color: "#0071e3", stage: "new",           status: "Pending" },
-  { key: "review",    label: "Under review",  color: "#AF52DE", stage: "under_review",  status: "Pending" },
+  { key: "review",    label: "Pending Analyst", color: "#AF52DE", stage: "under_review",  status: "Pending" },
   { key: "pending",   label: "Pending sales", color: "#FF9F0A", stage: "pending_sales", status: "Pending" },
   { key: "converted", label: "Converted",     color: "#30D158", stage: "converted",     status: "Converted" },
   { key: "lost",      label: "Not converted", color: "#E24B4A", stage: "lost",          status: "Not Converted" },
@@ -26,6 +27,7 @@ const STAGE_TO_COL: Record<WorkflowStage, string> = {
 };
 
 export default function KanbanPage() {
+  const router = useRouter();
   const { rangedDemos, setDemos, flash, setConfirm, logActivity, draftsByDemoId } = useStore();
   const [dragOver, setDragOver] = useState<string | null>(null);
   const [dragging, setDragging] = useState<{ card: typeof rangedDemos[0]; from: string } | null>(null);
@@ -50,7 +52,7 @@ export default function KanbanPage() {
       if (toCol === "converted" || toCol === "lost") {
         setConfirm({ title: "Move to " + (toCol === "converted" ? "Converted" : "Not Converted") + "?", msg: dragging.card.student + " status will change.", onConfirm: () => {
           setDemos((p) => p.map((d) => d.id === dragging.card.id ? { ...d, status: newStatus, workflowStage: newStage } : d));
-          logActivity(toCol === "converted" ? "converted" : "not converted", "Kanban", dragging.card.student);
+          logActivity(toCol === "converted" ? "converted" : "not converted", dragging.card.student);
           flash(dragging.card.student + " moved");
         }});
       } else {
@@ -87,7 +89,14 @@ export default function KanbanPage() {
                   const finalized = draft && isFinalized(draft) ? draft : null;
                   const badge = finalized ? interpretationBadge(finalized.draft_data.total_score) : null;
                   return (
-                    <div key={card.id} className="kanban-card" draggable onDragStart={() => setDragging({ card, from: col.key })}>
+                    <div
+                      key={card.id}
+                      className="kanban-card"
+                      draggable
+                      onDragStart={() => setDragging({ card, from: col.key })}
+                      onClick={() => router.push(`/analyst/${card.id}`)}
+                      style={{ cursor: "pointer" }}
+                    >
                       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "start" }}>
                         <div><div style={{ fontSize: 12, fontWeight: 600, lineHeight: 1.3 }}>{card.student}</div><div style={{ fontSize: 10, color: MUTED, marginTop: 1 }}>{card.teacher}</div></div>
                         <span style={{ fontSize: 9, fontWeight: 600, padding: "1px 6px", borderRadius: 980, background: ageColor(age), color: ageTextColor(age), flexShrink: 0 }}>{age === 0 ? "Today" : age + "d"}</span>

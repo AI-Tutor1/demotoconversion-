@@ -1,15 +1,13 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, useEffect, useRef } from "react";
 import { useStore } from "@/lib/store";
 import { StatusBadge } from "@/components/ui";
-import { initials } from "@/lib/utils";
+import { initials, relativeTime } from "@/lib/utils";
 import { NEAR_BLACK, LIGHT_GRAY, MUTED, BLUE } from "@/lib/types";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 
 export default function DashboardPage() {
-  const router = useRouter();
   const {
     stats,
     rangedDemos,
@@ -17,15 +15,62 @@ export default function DashboardPage() {
     dateRange,
     user,
     draftsByDemoId,
+    processingDemoIds,
     triggerAnalyze,
     triggerProcessRecording,
     flash,
-    logActivity,
   } = useStore();
-  const [analyzingId, setAnalyzingId] = useState<number | null>(null);
-  const [processingId, setProcessingId] = useState<number | null>(null);
+  const [retryingId, setRetryingId] = useState<number | null>(null);
 
-  const canAnalyze = user?.role === "analyst" || user?.role === "manager";
+  const canTriggerProcessing = user?.role === "analyst" || user?.role === "manager" || user?.role === "sales_agent";
+  const canTriggerAnalysis = user?.role === "analyst" || user?.role === "manager";
+
+  // Auto-trigger: fire AI pipeline for demos that need processing.
+  // Guards:
+  //   1. queuedRef  — each demo triggered at most once per page session.
+  //   2. processingDemoIds — skip if task_queue already has a running/queued task.
+  //   3. Hard-cap of 3 concurrent auto-triggers per mount (triggerCount ref).
+  //      Demos beyond the cap get a single toast and are left for manual retry.
+  const queuedRef = useRef<Set<number>>(new Set());
+  const triggerCountRef = useRef(0);
+  const AUTO_TRIGGER_CAP = 3;
+
+  useEffect(() => {
+    if (!canTriggerProcessing && !canTriggerAnalysis) return;
+    let skipped = 0;
+    rangedDemos.forEach((d) => {
+      if (queuedRef.current.has(d.id)) return;
+      const draft = draftsByDemoId[d.id];
+      const canReanalyze = !draft || draft.status === "rejected";
+      if (!canReanalyze) return;
+      // Skip if the backend already has an active task for this demo.
+      if (processingDemoIds.has(d.id)) return;
+      const hasRecording = !!(d.recording?.trim());
+      const hasTranscript = !!(d.transcript?.trim());
+      const needsTrigger =
+        (hasRecording && !hasTranscript) || (hasTranscript && !draft);
+      if (!needsTrigger) return;
+      if (triggerCountRef.current >= AUTO_TRIGGER_CAP) {
+        skipped++;
+        return;
+      }
+      // Processing (Whisper) is open to all three roles; analysis is analyst/manager only.
+      if (hasRecording && !hasTranscript) {
+        if (!canTriggerProcessing) return;
+        triggerCountRef.current++;
+        queuedRef.current.add(d.id);
+        triggerProcessRecording(d.id).finally(() => { triggerCountRef.current--; });
+      } else {
+        if (!canTriggerAnalysis) return;
+        triggerCountRef.current++;
+        queuedRef.current.add(d.id);
+        triggerAnalyze(d.id).finally(() => { triggerCountRef.current--; });
+      }
+    });
+    if (skipped > 0) {
+      flash(`Skipped ${skipped} auto-trigger${skipped === 1 ? "" : "s"} — run manually from /drafts`);
+    }
+  }, [rangedDemos, draftsByDemoId, processingDemoIds, canTriggerProcessing, canTriggerAnalysis, triggerProcessRecording, triggerAnalyze, flash]);
 
   // Fix 6 — for managers: count demos sitting in pending_sales with no sales agent.
   // Auto-assign (analyst form, Fix 2) should prevent new ones, but seed data
@@ -37,40 +82,15 @@ export default function DashboardPage() {
     ).length;
   }, [user?.role, rangedDemos]);
 
-  const onAnalyze = async (demoId: number) => {
-    setAnalyzingId(demoId);
-    const res = await triggerAnalyze(demoId);
-    setAnalyzingId(null);
-    if (!res.ok) {
-      flash(res.error);
-      return;
-    }
-    router.push(`/analyst/${demoId}`);
-  };
-
-  const onProcessRecording = async (demoId: number) => {
-    const demo = rangedDemos.find((d) => d.id === demoId);
-    const studentLabel = demo?.student ?? `Demo ${demoId}`;
-    setProcessingId(demoId);
-    logActivity("started processing", user?.full_name ?? "System", studentLabel);
+  const onRetry = async (demoId: number) => {
+    setRetryingId(demoId);
     const res = await triggerProcessRecording(demoId);
-    setProcessingId(null);
-    if (!res.ok) {
-      logActivity("processing failed", "AI", `${studentLabel} — ${res.error}`);
-      flash(res.error);
-      return;
+    setRetryingId(null);
+    if (res.ok) {
+      flash("Processing complete — draft ready for review");
+    } else {
+      flash(`Retry failed: ${res.error}`);
     }
-    if (res.status === "transcription_only") {
-      logActivity(
-        "processing partial",
-        "AI",
-        `${studentLabel} — transcript saved, analysis failed`,
-      );
-      flash("Transcript saved. Auto-analysis failed — click Analyze to retry.");
-      return;
-    }
-    logActivity("processing complete", "AI", `${studentLabel} — scorecard ready`);
-    router.push(`/analyst/${demoId}`);
   };
 
   const emptyMessage =
@@ -155,12 +175,11 @@ export default function DashboardPage() {
               const hasTranscript = !!(d.transcript && d.transcript.trim());
               const hasRecording = !!(d.recording && d.recording.trim());
               // Reviewed = the analyst has finalized this draft (approved or
-              // edited some fields). Rejected drafts fall through and show
-              // "Analyze" so the analyst can re-run the AI.
+              // edited some fields). Rejected drafts with a recording show
+              // "Retry processing" so the analyst can re-run the AI pipeline.
               const reviewed =
                 draft && (draft.status === "approved" || draft.status === "partially_edited");
               const pendingReview = draft && draft.status === "pending_review";
-              const canReanalyze = !draft || draft.status === "rejected";
               return (
                 <div key={d.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 0", borderBottom: "1px solid #f0f0f0", gap: 8, flexWrap: "wrap" }}>
                   <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
@@ -173,7 +192,7 @@ export default function DashboardPage() {
                     </div>
                   </div>
                   <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                    {canAnalyze && reviewed && (
+                    {canTriggerAnalysis && reviewed && (
                       <Link
                         href={`/analyst/${d.id}`}
                         style={{
@@ -190,7 +209,7 @@ export default function DashboardPage() {
                         ✓ Reviewed
                       </Link>
                     )}
-                    {canAnalyze && pendingReview && (
+                    {canTriggerAnalysis && pendingReview && (
                       <Link
                         href={`/analyst/${d.id}`}
                         className="pill pill-outline"
@@ -199,35 +218,21 @@ export default function DashboardPage() {
                         Review draft
                       </Link>
                     )}
-                    {canAnalyze && hasTranscript && canReanalyze && (
-                      <button
-                        onClick={() => onAnalyze(d.id)}
-                        disabled={analyzingId === d.id}
-                        className="pill pill-outline"
-                        style={{
-                          padding: "4px 12px",
-                          fontSize: 12,
-                          opacity: analyzingId === d.id ? 0.6 : 1,
-                          cursor: analyzingId === d.id ? "default" : "pointer",
-                        }}
-                      >
-                        {analyzingId === d.id ? "Analyzing…" : "Analyze"}
-                      </button>
+                    {canTriggerProcessing && !hasTranscript && hasRecording && !draft && processingDemoIds.has(d.id) && (
+                      <span style={{ fontSize: 12, color: MUTED, fontStyle: "italic" }}>Processing…</span>
                     )}
-                    {canAnalyze && !hasTranscript && hasRecording && canReanalyze && (
+                    {canTriggerProcessing && !hasTranscript && hasRecording && !draft && !processingDemoIds.has(d.id) && (
                       <button
-                        onClick={() => onProcessRecording(d.id)}
-                        disabled={processingId === d.id}
+                        onClick={() => onRetry(d.id)}
+                        disabled={retryingId === d.id}
                         className="pill pill-outline"
                         style={{
                           padding: "4px 12px",
                           fontSize: 12,
-                          opacity: processingId === d.id ? 0.6 : 1,
-                          cursor: processingId === d.id ? "default" : "pointer",
+                          opacity: retryingId === d.id ? 0.6 : 1,
                         }}
-                        title="Download recording, transcribe, and auto-analyze"
                       >
-                        {processingId === d.id ? "Processing… (1–3 min)" : "Process recording"}
+                        {retryingId === d.id ? "Retrying…" : "Retry processing"}
                       </button>
                     )}
                     <StatusBadge status={d.status} />
@@ -238,17 +243,23 @@ export default function DashboardPage() {
           </div>
           <div>
             <h2 style={{ fontSize: 24, fontWeight: 600, marginBottom: 16 }}>Activity log</h2>
-            {activity.slice(0, 8).map((a) => (
-              <div key={a.id} style={{ display: "flex", gap: 8, padding: "8px 0", borderBottom: "1px solid #f5f5f7", alignItems: "start" }}>
-                <span style={{ width: 7, height: 7, borderRadius: "50%", background: a.action === "converted" ? "#30D158" : a.action.includes("escalat") ? "#FF3B30" : BLUE, flexShrink: 0, marginTop: 5 }} />
-                <div>
-                  <div style={{ fontSize: 13, lineHeight: 1.4 }}>
-                    <strong>{a.user}</strong> {a.action} <span style={{ color: BLUE }}>{a.target}</span>
-                  </div>
-                  <div style={{ fontSize: 11, color: MUTED }}>{a.time}</div>
-                </div>
+            {activity.length === 0 ? (
+              <div style={{ fontSize: 13, color: MUTED, padding: "12px 0" }}>
+                No activity yet. Actions will appear here as you work.
               </div>
-            ))}
+            ) : (
+              activity.slice(0, 8).map((a) => (
+                <div key={a.id} style={{ display: "flex", gap: 8, padding: "8px 0", borderBottom: "1px solid #f5f5f7", alignItems: "start" }}>
+                  <span style={{ width: 7, height: 7, borderRadius: "50%", background: a.action === "converted" ? "#30D158" : a.action.includes("escalat") ? "#FF3B30" : BLUE, flexShrink: 0, marginTop: 5 }} />
+                  <div>
+                    <div style={{ fontSize: 13, lineHeight: 1.4 }}>
+                      <strong>{a.user}</strong> {a.action} <span style={{ color: BLUE }}>{a.target}</span>
+                    </div>
+                    <div style={{ fontSize: 11, color: MUTED }}>{relativeTime(a.ts)}</div>
+                  </div>
+                </div>
+              ))
+            )}
           </div>
         </div>
       </section>

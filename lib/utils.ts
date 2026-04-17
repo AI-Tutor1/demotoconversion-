@@ -1,5 +1,14 @@
 const DAY = 864e5;
-const NOW = Date.now();
+
+export function relativeTime(ts: number): string {
+  const diff = Date.now() - ts;
+  if (diff < 0) return "just now";
+  if (diff < 60_000) return "just now";
+  if (diff < 3_600_000) return `${Math.floor(diff / 60_000)}m ago`;
+  if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)}h ago`;
+  const d = Math.floor(diff / 86_400_000);
+  return `${d}d ago`;
+}
 
 export function initials(name: string): string {
   return name
@@ -9,7 +18,7 @@ export function initials(name: string): string {
 }
 
 export function ageDays(ts: number): number {
-  return Math.max(0, Math.floor((NOW - ts) / DAY));
+  return Math.max(0, Math.floor((Date.now() - ts) / DAY));
 }
 
 export function ageColor(d: number): string {
@@ -32,7 +41,8 @@ export function formatMonth(dateStr: string): string {
 export function inDateRange(dateStr: string, range: string): boolean {
   if (range === "all") return true;
   const d = new Date(dateStr);
-  const today = new Date("2026-04-12");
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
   const diff = (today.getTime() - d.getTime()) / DAY;
   if (range === "7d") return diff <= 7;
   if (range === "30d") return diff <= 30;

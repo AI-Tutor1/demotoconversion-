@@ -207,3 +207,40 @@ class ProcessRecordingResponse(BaseModel):
     # "transcribed_and_analyzed" — happy path
     # "transcription_only"       — transcript saved but auto-chained analysis failed
     status: str
+
+
+# ─── Product Review Workflow — Sessions ──────────────────────
+
+class SessionRow(BaseModel):
+    """Minimal shape of a sessions row the agents need."""
+
+    id: int
+    tutor_name: str
+    subject: str
+    grade: str
+    recording_link: Optional[str] = None
+    enrollment_name: str = ""
+
+
+class SessionAnalysisResponse(BaseModel):
+    """Response body from POST /api/v1/sessions/{id}/analyze."""
+
+    id: str
+    session_id: int
+    agent_name: str
+    status: str
+    draft_data: DraftOutput
+    created_at: datetime
+
+
+class SessionProcessRecordingResponse(BaseModel):
+    """Response from POST /api/v1/sessions/{id}/process-recording.
+
+    The endpoint enqueues the ingest + analyst chain into FastAPI
+    BackgroundTasks and returns 202 immediately. The pipeline runs
+    asynchronously; the frontend watches processing_status updates via
+    the sessions table realtime subscription.
+    """
+
+    session_id: int
+    status: str  # "queued"

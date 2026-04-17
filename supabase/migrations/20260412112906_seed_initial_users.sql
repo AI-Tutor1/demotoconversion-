@@ -1,12 +1,10 @@
 -- ============================================================
 -- Seed the 3 initial users (dev/testing accounts)
 -- ============================================================
--- TODO: PRODUCTION — rotate all dev passwords before launch,
--- then enable Supabase's HaveIBeenPwned leak-protection advisor.
--- ------------------------------------------------------------
--- Default password: ChangeMe123!  (rotate before production)
--- Creates rows in auth.users + auth.identities + public.users atomically.
--- UUIDs are generated once and reused across all three tables.
+-- ⚠️  DO NOT apply this migration directly in production.
+-- Use scripts/seed-dev-users.sh which reads passwords from
+-- environment variables and sets app.allow_dev_seed = 'true'
+-- before executing the seed block below.
 -- ============================================================
 
 DO $$
@@ -14,8 +12,24 @@ DECLARE
   v_manager_id UUID := gen_random_uuid();
   v_analyst_id UUID := gen_random_uuid();
   v_sales_id   UUID := gen_random_uuid();
-  v_password   TEXT := 'ChangeMe123!';
+  v_manager_pwd TEXT;
+  v_analyst_pwd TEXT;
+  v_sales_pwd   TEXT;
 BEGIN
+  -- Guard: refuse to run unless the caller explicitly opted in.
+  -- scripts/seed-dev-users.sh sets this via SET app.allow_dev_seed = 'true'.
+  IF current_setting('app.allow_dev_seed', true) IS DISTINCT FROM 'true' THEN
+    RAISE EXCEPTION
+      'Seed users must be created via scripts/seed-dev-users.sh — '
+      'do not apply this migration directly in production. '
+      'Set app.allow_dev_seed = ''true'' to override.';
+  END IF;
+
+  -- Passwords come from session settings supplied by the seed script.
+  v_manager_pwd := current_setting('app.manager_pwd', false);
+  v_analyst_pwd := current_setting('app.analyst_pwd', false);
+  v_sales_pwd   := current_setting('app.sales_pwd',   false);
+
   -- ─── auth.users ────────────────────────────────────────────
   -- NOTE: confirmation_token / recovery_token / email_change / email_change_token_new
   -- must be '' (not NULL) — GoTrue aggregates them during sign-in and raw-SQL
@@ -28,19 +42,19 @@ BEGIN
     confirmation_token, recovery_token, email_change_token_new, email_change
   ) VALUES
     ('00000000-0000-0000-0000-000000000000', v_manager_id, 'authenticated', 'authenticated',
-     'manager@demo.pk', crypt(v_password, gen_salt('bf')), NOW(),
+     'manager@demo.pk', crypt(v_manager_pwd, gen_salt('bf')), NOW(),
      '{"provider":"email","providers":["email"]}'::jsonb,
      '{"full_name":"Manager User"}'::jsonb,
      NOW(), NOW(), FALSE,
      '', '', '', ''),
     ('00000000-0000-0000-0000-000000000000', v_analyst_id, 'authenticated', 'authenticated',
-     'analyst@demo.pk', crypt(v_password, gen_salt('bf')), NOW(),
+     'analyst@demo.pk', crypt(v_analyst_pwd, gen_salt('bf')), NOW(),
      '{"provider":"email","providers":["email"]}'::jsonb,
      '{"full_name":"Analyst User"}'::jsonb,
      NOW(), NOW(), FALSE,
      '', '', '', ''),
     ('00000000-0000-0000-0000-000000000000', v_sales_id, 'authenticated', 'authenticated',
-     'sales@demo.pk',   crypt(v_password, gen_salt('bf')), NOW(),
+     'sales@demo.pk',   crypt(v_sales_pwd, gen_salt('bf')), NOW(),
      '{"provider":"email","providers":["email"]}'::jsonb,
      '{"full_name":"Sales User"}'::jsonb,
      NOW(), NOW(), FALSE,

@@ -5,10 +5,13 @@ type CookieSet = { name: string; value: string; options: CookieOptions };
 
 // Route protection matrix (mirrors SECURITY.md)
 const ROLE_GATES: { prefix: string; allowed: string[] }[] = [
-  { prefix: "/analyst", allowed: ["analyst", "manager"] },
-  { prefix: "/drafts",  allowed: ["analyst", "manager"] },
-  { prefix: "/sales",   allowed: ["sales_agent", "manager"] },
-  { prefix: "/admin",   allowed: ["manager"] },
+  { prefix: "/analyst/", allowed: ["analyst", "sales_agent", "manager"] },
+  { prefix: "/analyst",  allowed: ["analyst", "sales_agent", "manager"] },
+  { prefix: "/drafts",   allowed: ["analyst", "manager"] },
+  { prefix: "/sales",    allowed: ["sales_agent", "manager"] },
+  { prefix: "/admin",       allowed: ["manager"] },
+  { prefix: "/enrollments", allowed: ["analyst", "manager"] },
+  { prefix: "/sessions",    allowed: ["analyst", "manager"] },
 ];
 
 export async function middleware(req: NextRequest) {
@@ -59,12 +62,22 @@ export async function middleware(req: NextRequest) {
   if (user) {
     const gate = ROLE_GATES.find((g) => pathname.startsWith(g.prefix));
     if (gate) {
-      const { data: profile } = await supabase
-        .from("users")
-        .select("role")
-        .eq("id", user.id)
-        .single();
-      const role = (profile as { role: string } | null)?.role;
+      // Primary: read role from JWT custom claim (set by custom_access_token_hook
+      // migration 20260415000008_add_role_to_jwt.sql — requires manual hook
+      // registration in Supabase dashboard after the migration is applied).
+      // Fallback: DB lookup for sessions that pre-date the hook registration.
+      let role: string | undefined =
+        (user.app_metadata as Record<string, unknown> | null)?.app_role as string | undefined;
+
+      if (!role) {
+        const { data: profile } = await supabase
+          .from("users")
+          .select("role")
+          .eq("id", user.id)
+          .single();
+        role = (profile as { role: string } | null)?.role;
+      }
+
       if (!role || !gate.allowed.includes(role)) {
         const url = req.nextUrl.clone();
         url.pathname = "/";

@@ -1,0 +1,39 @@
+# Render Blueprint for the FastAPI backend.
+#
+# How this is used: when you connect the repo to Render and pick "Blueprint",
+# Render auto-detects this file and creates the service with the settings below.
+# Secrets are left blank on purpose (`sync: false`) so you set them in the
+# Render dashboard — NEVER commit real keys to the repo.
+#
+# ⚠️  Plan choice matters:
+#   - free      : sleeps after 15 min of inactivity. A background ingest
+#                 running when the service sleeps WILL DIE mid-flight.
+#                 Only acceptable for first-day smoke tests.
+#   - starter   : always-on, $7/mo. Required for reliable background tasks.
+#
+# Bump `plan: starter` below once you're ready for real traffic.
+
+services:
+  - type: web
+    name: demo-to-conversion-backend
+    runtime: docker
+    plan: free
+    region: oregon            # cheapest US-West region; change if you prefer
+    rootDir: backend
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    healthCheckPath: /health
+    autoDeploy: true          # redeploy on push to main
+    envVars:
+      - key: GROQ_API_KEY
+        sync: false           # set in Render dashboard
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: FRONTEND_ORIGINS
+        sync: false           # comma-separated Vercel URL(s) — fill after first Vercel deploy
+      - key: PORT
+        value: "8000"         # matches the Dockerfile EXPOSE
+      - key: PYTHONUNBUFFERED
+        value: "1"

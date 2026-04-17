@@ -20,12 +20,44 @@ from pathlib import Path
 from typing import Any
 
 import gdown
-from openai import AsyncOpenAI
+from openai import AsyncOpenAI, RateLimitError
 
 from app.config import settings
 from app.models import IngestResult
 
 AGENT_NAME = "ingest"
+
+# Serialize Google Drive downloads at the process level. Drive rate-limits
+# per-IP; five parallel gdown calls from the same IP reliably time out inside
+# gdown's retry loop. A single-slot semaphore eliminates that thrash. Widen
+# only if benchmarks show Drive is happy with >1 concurrent download.
+_DRIVE_SEMAPHORE = asyncio.Semaphore(1)
+
+# Groq whisper-large-v3 has a per-model rate limit that trips when multiple
+# long recordings are submitted in parallel (observed as 429 "rate limit
+# reached" even after the Drive semaphore serialized downloads). Serializing
+# transcriptions eliminates that thrash; widen to 2 only after benchmarking.
+_WHISPER_SEMAPHORE = asyncio.Semaphore(1)
+
+# How long to back off when Groq returns a 429 inside Whisper, in seconds.
+# Groq's Retry-After is honoured if the SDK parses it; this is the fallback.
+_WHISPER_RATE_LIMIT_BACKOFF_SECONDS = 30.0
+_WHISPER_MAX_RATE_LIMIT_RETRIES = 2
+
+# Module-level Whisper client — reuse the HTTP connection pool instead of
+# re-handshaking TLS with api.groq.com on every call. Lazy so import order
+# doesn't force env to be loaded before `settings` exists.
+_whisper_client: AsyncOpenAI | None = None
+
+
+def _get_whisper_client() -> AsyncOpenAI:
+    global _whisper_client
+    if _whisper_client is None:
+        _whisper_client = AsyncOpenAI(
+            api_key=settings.groq_api_key,
+            base_url=GROQ_BASE_URL,
+        )
+    return _whisper_client
 
 # Groq Whisper API free-tier file-size ceiling (paid tier raises it, but
 # 25 MB keeps us compatible across plans).
@@ -70,16 +102,22 @@ async def _download_gdrive(
 ) -> None:
     """Download a Google Drive file using gdown. gdown handles the virus-scan
     confirmation page, large-file redirects, and cookies that our custom
-    downloader tripped over. Raises RuntimeError on empty/failed download."""
+    downloader tripped over. Raises RuntimeError on empty/failed download.
+
+    Serialized via _DRIVE_SEMAPHORE — concurrent gdown calls from the same IP
+    trigger Drive rate-limits that burn the full timeout budget inside gdown's
+    own retry loop.
+    """
     url = f"https://drive.google.com/uc?id={file_id}"
 
     def _sync_download() -> None:
         gdown.download(url, str(dest_path), quiet=True, fuzzy=True)
 
-    await asyncio.wait_for(
-        asyncio.to_thread(_sync_download),
-        timeout=timeout_s,
-    )
+    async with _DRIVE_SEMAPHORE:
+        await asyncio.wait_for(
+            asyncio.to_thread(_sync_download),
+            timeout=timeout_s,
+        )
 
     if not dest_path.exists() or dest_path.stat().st_size < 1024:
         raise RuntimeError(
@@ -119,19 +157,40 @@ async def _extract_audio(
 
 async def _transcribe(audio_path: Path) -> tuple[Any, float]:
     """Call Groq Whisper via its OpenAI-compatible endpoint.
-    Returns (VerboseTranscription response, wall-clock seconds)."""
-    client = AsyncOpenAI(api_key=settings.groq_api_key, base_url=GROQ_BASE_URL)
+
+    Serialized across the process via _WHISPER_SEMAPHORE (Groq's per-model
+    rate limit trips on parallel long recordings). Retries on 429 with a
+    fixed backoff — this is on top of whatever the OpenAI SDK already does.
+
+    Returns (VerboseTranscription response, wall-clock seconds).
+    """
+    client = _get_whisper_client()
     started = time.monotonic()
-    with open(audio_path, "rb") as f:
-        # verbose_json already returns segment-level timestamps; Groq rejects
-        # the OpenAI-specific `timestamp_granularities` parameter.
-        response = await client.audio.transcriptions.create(
-            model=GROQ_WHISPER_MODEL,
-            file=f,
-            response_format="verbose_json",
+
+    async with _WHISPER_SEMAPHORE:
+        last_err: Exception | None = None
+        for attempt in range(_WHISPER_MAX_RATE_LIMIT_RETRIES + 1):
+            try:
+                with open(audio_path, "rb") as f:
+                    # verbose_json already returns segment-level timestamps; Groq rejects
+                    # the OpenAI-specific `timestamp_granularities` parameter.
+                    response = await client.audio.transcriptions.create(
+                        model=GROQ_WHISPER_MODEL,
+                        file=f,
+                        response_format="verbose_json",
+                    )
+                elapsed = time.monotonic() - started
+                return response, elapsed
+            except RateLimitError as exc:
+                last_err = exc
+                if attempt >= _WHISPER_MAX_RATE_LIMIT_RETRIES:
+                    break
+                await asyncio.sleep(_WHISPER_RATE_LIMIT_BACKOFF_SECONDS)
+
+        # Exhausted retries — surface the most recent rate-limit error.
+        raise RuntimeError(
+            f"Whisper rate-limited after {_WHISPER_MAX_RATE_LIMIT_RETRIES + 1} attempts: {last_err}"
         )
-    elapsed = time.monotonic() - started
-    return response, elapsed
 
 
 # ─── Transcript formatting + speaker heuristic ────────────────

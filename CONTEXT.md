@@ -1,5 +1,54 @@
 # CONTEXT.md — Business Domain & Pipeline Logic
 
+## Integration Contracts — frontend ↔ DB ↔ backend
+
+These are the cross-layer promises the smoke script enforces. If you change one, update the corresponding layer + apply migrations before committing (see `CLAUDE.md → Deploy Contract`).
+
+### Supabase RPCs (called by `lib/supabase-sync.ts`)
+
+| RPC | Args | Returns | Purpose |
+|-----|------|---------|---------|
+| `create_demo_with_pour(demo_payload jsonb, pour_payload jsonb)` | Demo row as JSONB; POUR array as JSONB | server-assigned `bigint` id | Atomic INSERT of `demos` + `pour_issues` in a single transaction. Id reconciliation happens client-side. |
+| `update_demo_pour(p_demo_id bigint, next_pour jsonb)` | Demo id + next POUR array | void | Atomic DELETE + INSERT of `pour_issues` for that demo — no window where the demo has zero issues. |
+| `custom_access_token_hook(event jsonb)` | Supabase Auth event | modified event with `app_role` claim | Auth hook — injects the user's `public.users.role` as a JWT custom claim. Registered via **Supabase Dashboard → Authentication → Hooks** (one-time). |
+
+All three live in `supabase/migrations/20260415000006_create_demo_rpc.sql` and `...0008_add_role_to_jwt.sql`. `create_demo_with_pour` + `update_demo_pour` use `SECURITY INVOKER` + `SET search_path = public`.
+
+### Product Review RPCs (called from `/enrollments` and `/sessions` pages)
+
+| RPC | Args | Returns | Purpose |
+|-----|------|---------|---------|
+| `upsert_enrollments(payload jsonb)` | JSON array of enrollment objects | `integer` (count) | Batch upsert enrollments. `ON CONFLICT (enrollment_id) DO UPDATE`. |
+| `upsert_sessions(payload jsonb)` | JSON array of session objects | `TABLE(upserted_count int, auto_trigger_ids bigint[])` | Batch upsert sessions. Returns IDs with recording links for auto-trigger. |
+
+Both live in `supabase/migrations/20260416000102_upsert_rpcs.sql` and use `SECURITY INVOKER` + `SET search_path = public`.
+
+### Backend endpoints (FastAPI on `:8000`)
+
+**Demo pipeline endpoints** require `Authorization: Bearer <supabase-access-token>` and enforce role. Both are **idempotent**:
+
+| Route | Guards | Returns 409 when… |
+|-------|--------|-------------------|
+| `POST /api/v1/demos/{id}/analyze` | auth + role ∈ {analyst, manager} + demo exists + transcript not empty | `task_queue` has a `running/queued` row for this `(demo_id, agent)` OR `demo_drafts` has a `pending_review` row |
+| `POST /api/v1/demos/{id}/process-recording` | auth + role + demo exists + recording URL valid | same, agent = `ingest` |
+
+**Product Review endpoints** — same auth pattern, analyst + manager only:
+
+| Route | Guards | Returns 409 when… |
+|-------|--------|-------------------|
+| `POST /api/v1/sessions/{id}/process-recording` | auth + role ∈ {analyst, manager} + session exists + recording_link valid | `task_queue` has running task OR `session_drafts` has `pending_review` row |
+| `POST /api/v1/sessions/{id}/analyze` | auth + role + session exists + transcript not empty | same |
+
+### Backend auth — ES256 + JWKS
+
+`backend/app/auth.py` verifies user tokens using the project's public JWKS at `{SUPABASE_URL}/auth/v1/.well-known/jwks.json`. The previous assumption of HS256 + shared `JWT Secret` was wrong for this project (projects created Apr 2026+ use asymmetric ES256 by default). See `memory/feedback_supabase_jwt_alg.md` for the rule.
+
+### Frontend → backend header contract
+
+`lib/store.tsx` attaches `Authorization: Bearer <access_token>` (via `supabase.auth.getSession()`) on every call to `/api/v1/demos/*/analyze` and `/process-recording`. Other fetches don't need it.
+
+---
+
 ## Business Overview
 
 This platform serves a **tutoring company based in Karachi, Pakistan** that offers online tutoring across IGCSE, O Level, A Level, IB, and other curricula. When a potential student books a demo session, a teacher delivers a trial class. The platform tracks what happens between that demo and the student either enrolling (converting) or not.

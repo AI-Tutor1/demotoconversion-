@@ -2,7 +2,17 @@
 
 ## Identity
 
-You are working on the **Demo to Conversion Platform** for **Tuitional Education**, a tutoring company in Karachi, Pakistan. This is a Next.js 15 frontend wired to Supabase (Phase 2) that tracks demo tutoring sessions through an 11-step pipeline. Python AI backend (Phase 3) is deferred.
+You are working on the **Demo to Conversion Platform** for **Tuitional Education**, a tutoring company in Karachi, Pakistan. This tracks demo tutoring sessions through an 11-step pipeline.
+
+## Stack — three layers, one repo, one deploy
+
+| Layer | Directory | What it does |
+|-------|-----------|-------------|
+| Frontend | `app/`, `components/`, `lib/`, `middleware.ts` | Next.js 15 + React 19 + Supabase client |
+| Backend (Phase 3, active) | `backend/` | FastAPI + LangGraph + Anthropic + Groq Whisper. Runs on `:8000`. Auth: ES256 JWT via JWKS (see `backend/app/auth.py`) |
+| Database | `supabase/migrations/` | Postgres + RLS + Realtime + Auth. Migrations must be applied in order |
+
+**These three layers ship together.** Frontend code that calls a Supabase RPC assumes the migration introducing it has been applied. Frontend code that hits a backend endpoint assumes the backend has been deployed with the matching handler. A PR that changes one without the others will break at runtime even if `npm run build` is green. See **Deploy Contract** below.
 
 ## The Four Laws — Non-Negotiable
 
@@ -39,11 +49,44 @@ Zero matches required.
 The pattern matches a standalone quoted `"Zain"` / `'Zain'` string literal — that's how the bug originally manifested (`{ id: 3, name: "Zain" }` in the AGENTS array). It deliberately does **not** match legitimate teacher names that contain "Zain" as a substring (e.g. `"Syed Zain Ali Akbar"`, `"Zainab Fatima"` — added to the TEACHERS roster on 2026-04-14). The naive `grep 'Zain'` would false-positive on those.
 
 ### Law 4: Bracket Balance
-After creating or editing any `.tsx` file:
-```bash
-node -e "const c=require('fs').readFileSync('FILE.tsx','utf8');let b=0,p=0,k=0;for(const x of c){if(x==='{')b++;if(x==='}')b--;if(x==='(')p++;if(x===')')p--;if(x==='[')k++;if(x===']')k--;}console.log('{}:',b,'():',p,'[]:',k);if(b||p||k)process.exit(1);"
+After creating or editing any `.tsx` file, the naive `{}`/`()`/`[]` counts must each be zero.
+
+### Running all four
+Don't run the four greps by hand — they're codified in `scripts/_four-laws-check.sh`, which `scripts/smoke.sh` calls. See **Before You Commit** below.
+
+## Deploy Contract
+
+The three stack layers ship **in lockstep**:
+
 ```
-All three counts must be 0.
+1.  Apply migrations       supabase/migrations/ → DB
+2.  Deploy backend         backend/   → :8000  (needs `cryptography`, `PyJWT`)
+3.  Build + serve frontend app/ + lib/ → :3000 (reads from (1) and (2))
+```
+
+If step 3 references anything added in step 1 or 2, steps 1 + 2 MUST be deployed first. **An on-disk migration that has not been applied is a footgun** — the frontend `supabase.rpc('foo', …)` call passes TypeScript but 404s at runtime. This is what broke the UI on 2026-04-15 (see MEMORY.md `feedback_never_ship_unverified_integration.md`).
+
+**The smoke script enforces this.** `scripts/smoke.sh` probes every `supabase.rpc()` called from frontend code against the live DB; it fails loudly if any called function isn't deployed.
+
+## Before You Commit
+
+**Single command:** `./scripts/smoke.sh`
+
+It runs, in order:
+1. Four Laws + bracket balance — `scripts/_four-laws-check.sh`
+2. `npm run build` — zero TS errors, zero new warnings
+3. Migration manifest — every RPC in frontend code exists in the DB
+4. Backend contract — `POST /api/v1/demos/*/analyze` without auth returns 401
+5. Dev server reachability — `/login` returns HTML (if dev is running)
+
+A passing run ends with `✅ smoke passed`. Anything else blocks the commit.
+
+For this to be automatic on every push, install the hook once per clone:
+```bash
+./scripts/install-git-hooks.sh
+```
+
+**If you're touching code that calls a Supabase RPC, reads a new column, hits a new backend endpoint, or reads a new env var — the migration / deploy / env MUST be applied before the commit.** Do not ship on trust.
 
 ## Workflow for Every Task
 
@@ -55,8 +98,8 @@ UNDERSTAND → LOCATE → PLAN → IMPLEMENT → VERIFY → REPORT
 2. **LOCATE** — Identify which files need to change. Check the File Roles table.
 3. **PLAN** — State what you will change and why, before writing code. If touching `lib/store.tsx`, list every consumer that will be affected.
 4. **IMPLEMENT** — Follow the Code Conventions section below.
-5. **VERIFY** — Run the Four Laws + `npm run build`.
-6. **REPORT** — Summarize what changed and confirm checks passed.
+5. **VERIFY** — `./scripts/smoke.sh` (runs Four Laws + build + migration manifest + backend contract). No other sequence.
+6. **REPORT** — Summarize what changed and confirm the smoke passed.
 
 ## Project Structure
 
@@ -70,11 +113,18 @@ UNDERSTAND → LOCATE → PLAN → IMPLEMENT → VERIFY → REPORT
 │   ├── sales/page.tsx            # Sales queue + detail + Step 10 accountability
 │   ├── kanban/page.tsx           # Drag-drop board (workflow_stage columns)
 │   ├── analytics/page.tsx        # All charts (computed from live demos)
-│   └── teachers/page.tsx         # Teacher performance + drill-down
+│   ├── teachers/page.tsx         # Teacher performance + drill-down
+│   ├── enrollments/page.tsx      # Product Review: enrollment CSV upload + table
+│   └── sessions/
+│       ├── page.tsx              # Product Review: session CSV upload + table + status
+│       └── [id]/page.tsx         # Product Review: session detail + AI scorecard
 ├── components/
 │   ├── nav.tsx                   # Glass nav, search, notifications, user menu
 │   ├── ui.tsx                    # StatusBadge, Field, Stars, EmptyState, SectionHeader
-│   └── toast-confirm.tsx         # Toast + confirm modal
+│   ├── toast-confirm.tsx         # Toast + confirm modal
+│   ├── csv-upload.tsx            # Reusable CSV file upload button
+│   ├── session-status-badge.tsx  # Processing status badge (pending/processing/scored/approved/failed)
+│   └── session-draft-review.tsx  # Session QA scorecard review (8-question, approve/reject)
 ├── lib/
 │   ├── types.ts                  # Demo type, design tokens, lookup arrays
 │   ├── utils.ts                  # Helper functions
@@ -82,7 +132,9 @@ UNDERSTAND → LOCATE → PLAN → IMPLEMENT → VERIFY → REPORT
 │   ├── store.tsx                 # React Context + Supabase reads/writes/realtime
 │   ├── supabase.ts               # Browser Supabase singleton
 │   ├── supabase-server.ts        # Server Supabase client (cookies-based)
-│   └── transforms.ts             # dbRowToDemo / demoToInsertRow / demoUpdatesToDb
+│   ├── transforms.ts             # dbRowToDemo / demoToInsertRow / demoUpdatesToDb
+│   ├── csv-parser.ts             # Client-side CSV parser + column mappers (enrollments, sessions)
+│   └── review-transforms.ts      # DB row ↔ camelCase for enrollments + sessions
 ├── middleware.ts                 # Route protection + auth refresh
 ├── supabase/
 │   └── migrations/               # SQL migrations (timestamp-prefixed)
@@ -110,6 +162,9 @@ UNDERSTAND → LOCATE → PLAN → IMPLEMENT → VERIFY → REPORT
 | `lib/utils.ts` | Helper functions | When formatting or computing |
 | `components/ui.tsx` | Shared UI components | When building any view |
 | `components/nav.tsx` | Navigation (role-filtered) | Never render inside a page |
+| `lib/csv-parser.ts` | CSV parse + column mapping | When touching CSV upload flow |
+| `lib/review-transforms.ts` | Enrollment/session DB transforms | When changing enrollment/session schema |
+| `components/session-draft-review.tsx` | Session scorecard review | When modifying session approval flow |
 | `app/globals.css` | All CSS classes | When adding new CSS |
 | `supabase/migrations/` | Schema history | When changing DB shape |
 
@@ -389,7 +444,7 @@ done
 - Do NOT create separate CSS files per component — all CSS in `globals.css`
 - Do NOT use `localStorage` / `sessionStorage` — state is Supabase + React Context
 - Do NOT render `<Nav />` inside pages — it's in `layout.tsx`
-- Do NOT use `"use server"` — Phase 3 backend is deferred
+- Do NOT use `"use server"` — backend runs as a separate FastAPI service at `:8000`; frontend talks to it over HTTP with `Authorization: Bearer <supabase-access-token>`
 - Do NOT add new npm dependencies without explicit instruction
 - Do NOT hardcode chart data — compute from `rangedDemos` via `useMemo`
 - Do NOT use `return(` without a space (Law 1)

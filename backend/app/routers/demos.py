@@ -10,17 +10,18 @@ from __future__ import annotations
 import asyncio
 from datetime import datetime, timezone
 
-import anthropic
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status
+from openai import OpenAIError
 
 from agents import base, demo_analyst
+from app.auth import AuthUser, require_auth
 from app.models import AnalysisResponse
 
 router = APIRouter()
 
 # Upper bound on a single Demo Analyst call (LLM + retry + parse).
-# Typical run is 5-15s against Claude Sonnet; 60s gives headroom for network /
-# rate-limit backoff / long transcripts without leaving a request hanging forever.
+# Typical run is 1-3s against Groq Llama 3.3 70B; 60s gives headroom for
+# network/rate-limit backoff / long transcripts without leaving a request hanging.
 AGENT_TIMEOUT_SECONDS = 60.0
 
 
@@ -29,13 +30,25 @@ AGENT_TIMEOUT_SECONDS = 60.0
     response_model=AnalysisResponse,
     summary="Run the Demo Analyst agent against a demo's transcript",
 )
-async def analyze(demo_id: int) -> AnalysisResponse:
+async def analyze(
+    demo_id: int,
+    user: AuthUser = Depends(require_auth),
+) -> AnalysisResponse:
     # 1. Fetch demo — 404 if missing
     demo = await base.fetch_demo(demo_id)
     if demo is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Demo {demo_id} not found",
+        )
+
+    # 1a. Authorise — analyst/manager/sales_agent allowed.
+    # Sales agents own their demos (RLS-scoped); the role gate rejects
+    # any other unanticipated role at the application layer.
+    if user.role not in ("analyst", "manager", "sales_agent"):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only analysts, managers, and sales agents may trigger demo analysis",
         )
 
     # 2. Reject if transcript is missing/empty — 400, and do NOT start a task row
@@ -45,7 +58,23 @@ async def analyze(demo_id: int) -> AnalysisResponse:
             detail="No transcript available for this demo",
         )
 
-    # 3. Record task start (from here on, every failure path updates this row)
+    # 3. Idempotency: if a task is already running/queued, return 409.
+    existing_task_id = await base.fetch_running_task(demo_id, demo_analyst.AGENT_NAME)
+    if existing_task_id is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Analysis already in progress (task_id={existing_task_id}). Wait for it to complete before retrying.",
+        )
+
+    # 3a. Also block if a pending_review draft already exists for this demo.
+    existing_draft = await base.fetch_pending_draft(demo_id)
+    if existing_draft is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"A pending draft already exists for demo {demo_id} (draft_id={existing_draft}). Approve or reject it first.",
+        )
+
+    # 4. Record task start (from here on, every failure path updates this row)
     started_at = datetime.now(timezone.utc)
     task_id = await base.record_task_start(demo_id, demo_analyst.AGENT_NAME)
 
@@ -70,9 +99,9 @@ async def analyze(demo_id: int) -> AnalysisResponse:
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=f"Demo Analyst returned invalid output: {exc}",
         )
-    except anthropic.AnthropicError as exc:
-        # API-side failures: auth, rate limit, Anthropic 5xx
-        await base.record_task_failed(task_id, f"Anthropic API error: {exc}")
+    except OpenAIError as exc:
+        # API-side failures: auth, rate limit, Groq 5xx (openai SDK is used against Groq's OpenAI-compatible endpoint)
+        await base.record_task_failed(task_id, f"Groq API error: {exc}")
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=f"Upstream LLM API error: {exc}",

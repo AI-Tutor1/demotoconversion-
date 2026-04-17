@@ -48,7 +48,7 @@ export default function AnalyticsPage() {
   const funnel = useMemo(() => {
     const t = demos.length;
     const reviewed = demos.filter((d) => d.review || d.analystRating > 0).length;
-    const contacted = demos.filter((d) => d.agent).length;
+    const contacted = demos.filter((d) => ["contacted", "converted", "lost"].includes(d.workflowStage)).length;
     const converted = demos.filter((d) => d.status === "Converted").length;
     return [{ stage: "Demos", count: t }, { stage: "Reviewed", count: reviewed }, { stage: "Contacted", count: contacted }, { stage: "Converted", count: converted }];
   }, [demos]);

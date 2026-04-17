@@ -482,6 +482,8 @@ Captured at Phase 3 kickoff so these don't need to be re-derived. All decisions 
 - **BUG-015: AnalysisResponse field name mismatch** — backend returned `draft_id`, frontend cast to `DemoDraft` which expects `id`. Caused `id: undefined` in local state, breaking approveDraft/rejectDraft. Renamed backend field to `id` so the response shape matches `DemoDraft` and the DB row shape from `demo_drafts.select('*')`.
 - **BUG-016: CSS shorthand override** — `borderLeft` set before `border` in inline-style object meant React serialized them in that order, and the `border` shorthand wiped out the `borderLeft` accept/edit color indicator. Visible result: every card was uniform 1px gray. Fix: put `border` first, `borderLeft` second.
 - **BUG-017: end-to-end pipeline gaps** — pipeline-completeness audit caught 6 holes: `analystId` field missing from Demo type, no auto-assignment to sales agent on submit, no transcript field on the analyst form, etc. Fixed in one pass.
+- **BUG-018: total_score mismatch between drafts list and detail page** — `app/drafts/page.tsx` was reading `draft.draft_data.total_score` (the value the AI backend stored, which can differ from the sum of individual question scores). `components/draft-review.tsx` recalculates by summing Q1–Q8 via `Q_KEYS.reduce(...)`. Result: list showed 16/32, detail showed 18/32. Fix: changed `app/drafts/page.tsx` to use `Q_KEYS.reduce((sum, k) => sum + (draft.draft_data[k]?.score ?? 0), 0)` — same computation as the detail view. **Rule: never trust `total_score` for display; always derive it from the Q1–Q8 sum so list and detail are always consistent.**
+- **BUG-020: POUR edit showing raw JSON** — the edit-mode UI for `pour_issues` in `components/draft-review.tsx` was a JSON textarea (value=`JSON.stringify(values.pour_issues)`). Any analyst clicking "Edit" saw `[{"category":"Time","description":"..."}]` raw text. Fix: replaced with a structured row-per-issue editor: category `<select>` locked to `POUR_CATS` + description `<input>` + × remove button + "+ Add issue" button. **Rule: never use JSON stringification as a user-facing edit interface for structured array fields.**
 
 ### Phase 4 readiness:
 - `demo_drafts.approval_rate` tracking ready for AI quality-drift detection
@@ -530,3 +532,152 @@ The bell icon count comes from `notifications` useMemo in `lib/store.tsx`. Curre
 - Escalation alerts (`demo.workflowStage = "lost"` with no account type)
 - Sales follow-up reminders (contacted > N days, still Pending)
 - Phase 4 agent failures (`task_queue.status = "failed"`)
+
+---
+
+## Part 13: Phase 3b Bugs — Coupling, Silent Failures, Data Integrity
+
+Landed during the April 2026 session where /analyst/{id} became the unified review surface and sales/analyst workflows were decoupled.
+
+### BUG-014: Silent No-Op on Incomplete Draft Submit
+- **Severity:** High — data-integrity invisible to the user
+- **Symptom:** Analyst clicks "Submit scorecard" and nothing visible happens. The demo stays `pending_review` in the DB, analytics shows "No reviewed drafts yet," and the user swears they reviewed it. Misdiagnosed later as an analytics bug.
+- **Root cause:** `DraftReview.submit()` started with `if (!allDecided || submitting) return;` — when `allDecided` was false (any of 12 fields still `"untouched"`) the function returned with no toast, no error, no log.
+- **Fix applied:** Replaced with an explicit `flash("N fields still need Accept or Edit before submitting.")` toast. See [components/draft-review.tsx:124-131](components/draft-review.tsx#L124-L131).
+- **GUARDRAIL:** Any button onClick that can no-op due to validation **must** surface a toast/error. Silent `return;` guards are banned. Before merging any submit handler: grep for `return;` right after an `if` on validation state and add user feedback.
+
+### BUG-015: Duplicate `demo_drafts` Rows per Demo
+- **Severity:** High — the /drafts queue showed the same demo 17× in a row
+- **Symptom:** Every retry of `/api/v1/demos/{id}/analyze` inserts a fresh draft row. The Python backend never upserts. With 21 demos the DB held 50 drafts; one demo had 4 rows all `pending_review`.
+- **Frontend mitigation:** `draftsByDemoId` in [lib/store.tsx:592-599](lib/store.tsx#L592-L599) keeps only the latest draft per `demo_id`. The drafts queue and analyst review page now read from this, not from raw `drafts`.
+- **GUARDRAIL:** **Never** iterate `drafts` directly in the UI. Always read `draftsByDemoId` — the raw array is polluted by retry history. Open issue: add `UNIQUE(demo_id)` + upsert semantics in the Python analyze endpoint so the DB itself stops accumulating junk.
+
+### BUG-016: Auto-Analyze Race With Initial Draft Fetch
+- **Severity:** Medium — false "Analyzing transcript…" + spurious backend POST
+- **Symptom:** Navigating directly to `/analyst/{id}` (e.g. from Kanban) showed "No AI draft yet" and auto-fired `triggerAnalyze` against the Python backend — even when a finalized draft already existed in the DB.
+- **Root cause:** Two `useEffect`s ran in parallel: one fetched the draft from Supabase, the other auto-triggered analyze when `draft === null`. The second fired on the first render before `fetchDraft` resolved.
+- **Fix applied:** Gate the auto-analyze effect on `lookupAttempted === true`. Only fire after at least one DB round-trip has returned null. See [app/analyst/[id]/page.tsx:51-65](app/analyst/%5Bid%5D/page.tsx#L51-L65).
+- **GUARDRAIL:** When two effects race to fill the same state slot (DB lookup vs. backend call), gate the slower/more-expensive one on the cheaper one completing. Never trigger writes based on initial `null` state — wait for the initial read to finish.
+
+### BUG-017: Grep Sweep Missed Call Site Due to Whitespace
+- **Severity:** High — broke the TypeScript build after a signature change
+- **Symptom:** Refactored `logActivity(action, user, target)` → `logActivity(action, target)` across 6 call sites. Build broke because a seventh call in `components/sales-input.tsx` was written as `logActivity (` (space before paren) and the sweep pattern `logActivity\(` didn't match.
+- **Fix applied:** Corrected the call. Signature changes now use `logActivity\s*\(` as the sweep pattern.
+- **GUARDRAIL:** When changing a function signature, the grep pattern for finding call sites **must** allow optional whitespace: `\bFUNCNAME\s*\(`. Plain `FUNCNAME\(` misses `FUNCNAME (` — common in auto-formatted code. Same rule for JSX component renames: use `<Component\s` not `<Component `.
+
+### BUG-018: Adding a Role Requires Coordinated Changes in 4 Layers
+- **Severity:** High — incomplete enablement silently breaks the user flow
+- **Symptom:** Sales user clicked "New demo review" → middleware redirected to `/?denied=analyst`. After widening middleware: Supabase INSERT rejected by RLS. After widening RLS: round-robin auto-assigned the demo to a *different* sales agent, locking the creator out via the `sales_agent_id = auth.uid()` SELECT policy.
+- **Root cause:** A role-change ripples across four independent layers and each blocks differently. Middleware gives a redirect, RLS gives a Postgres error, assignment logic gives a silent invisibility bug.
+- **Fix applied:** All four layers updated together — [middleware.ts:9](middleware.ts#L9) (allow sales_agent), migration `20260415000000_widen_demos_insert_for_sales` (widen INSERT policy), [app/analyst/page.tsx:67-82](app/analyst/page.tsx#L67-L82) (sales creators auto-assign to self), [app/analyst/page.tsx:96-102](app/analyst/page.tsx#L96-L102) (don't stamp analystId for non-analysts).
+- **GUARDRAIL:** Any time a role is granted a new capability, check **all four** layers before declaring done:
+  1. **Middleware** (`middleware.ts` ROLE_GATES) — can the role reach the route?
+  2. **Nav** (`components/nav.tsx` + dashboard buttons) — does the user see the entry point?
+  3. **RLS** (`supabase/migrations/*_rls*.sql`) — does the DB accept the INSERT/UPDATE/SELECT?
+  4. **Form/state logic** — are ID stamps and auto-assignments correct for the new role (don't lock them out of their own rows)?
+
+### BUG-019: Hardcoded Seed Data Bleeding Into Live UI
+- **Severity:** Medium — fresh DB looks broken ("3 activity entries for students that don't exist")
+- **Symptom:** After `TRUNCATE demos`, the dashboard's Activity Log still showed "Analyst submitted Alina Farooq demo · 2 min ago" etc. The seed entries never got cleared because they live in `lib/data.ts`, not the DB.
+- **Fix applied:** `SEED_ACTIVITY = []` in [lib/data.ts:6](lib/data.ts#L6). Dashboard Activity Log now shows "No activity yet" empty state.
+- **GUARDRAIL:** Any client-side seed array that references entities (students, teachers, agents) **must** default to empty `[]` in shipped code. Demo seeds are acceptable only inside `__mocks__/` or test fixtures, never in `lib/`. When you clear the DB, the UI must reflect it.
+
+### BUG-020: Tight Coupling of Analyst & Sales Workflows
+- **Severity:** High — sales couldn't record feedback until analyst finalized the scorecard
+- **Symptom:** `/analyst/{id}` rendered `SalesInput` only when both `isFinalized(draft)` **and** `demo.status === "Pending"`. If analyst hadn't reviewed yet, sales saw a dead end.
+- **Fix applied:** Page now renders two independent sections. Analyst section: DraftReview (editable) or ScorecardReport (read-only) + "Edit scorecard" button. Sales section: SalesInput for sales/manager; SalesFeedbackReport (read-only) for analyst. Neither gates the other. See [app/analyst/[id]/page.tsx](app/analyst/%5Bid%5D/page.tsx).
+- **Also fixed:** `DraftReview.submit()` used to unconditionally set `workflowStage = "pending_sales"` — which clobbered a sales-completed stage on re-edit. Now conditional on `status === "Pending"`.
+- **GUARDRAIL:** Two-party workflows (analyst writes, sales reads-and-extends) must be rendered as two independent sections, not serialized behind a gate. Re-edits must not overwrite downstream state — always check the current demo state before setting `status` / `workflowStage`.
+
+### BUG-021: Static "Today" in Date Filter
+- **Severity:** Medium — date-range filter diverges from real today as time passes
+- **Symptom:** [lib/utils.ts:35](lib/utils.ts#L35) hardcoded `const today = new Date("2026-04-12");`. Three days after that date, "7 days" filters started excluding genuinely recent demos.
+- **Fix applied (Tier 2.2, 2026-04-15):** Replaced with `const today = new Date(); today.setHours(0, 0, 0, 0);` in `inDateRange`. Same commit also removed a module-scope `const NOW = Date.now();` used by `ageDays` — see **BUG-027** for the ageDays half.
+- **Tradeoff accepted:** Short ranges (7d) now exclude seed demos older than a week from the actual clock date. "30d" and "all" still show everything. Seeds can be re-dated if short-range testing matters.
+- **GUARDRAIL:** If you ever see `const today = new Date("...")` flagged as "good enough for now," open a ticket the same day. Date-filter drift is silent — nothing crashes, the UI just slowly shows less data over time.
+
+---
+
+## Part N: 2026-04-15 CTO Audit — Tier 1 (Security) + Tier 2 (Correctness) + Tier 4 (Enforcement)
+
+A single-day audit pass addressed 5 critical security holes, 8 high-severity correctness bugs, and built the enforcement layer that prevents this class of regression. All three tiers shipped 2026-04-15. Activation date applies when the migrations were applied + backend redeployed.
+
+### BUG-022: `pour_issues` Wildcard Mutation via `analyst_id IS NULL`
+- **Severity:** Critical — any authenticated role (incl. `sales_agent`) could INSERT/DELETE `pour_issues` on any demo where `analyst_id IS NULL` (the normal state for new demos).
+- **Root cause:** Migration `20260413000009` widened the policies for draft-approval with a WITH CHECK that allowed `analyst_id IS NULL` without a role gate. Sales agents could mutate POUR data on unassigned demos.
+- **Fix applied:** Migration `20260415000003_tighten_pour_issues_mutations.sql` — drops the broad policies, recreates with `public.current_user_role() IN ('analyst', 'manager')` gate only.
+- **GUARDRAIL:** Every RLS WITH CHECK / USING for mutations must include a role gate (`current_user_role() = 'xyz'`). `analyst_id IS NULL` is a data condition, not an authorization check.
+
+### BUG-023: Sales `demos` INSERT Accepted Any Column Values
+- **Severity:** Critical — `sales_agent` could INSERT rows with `is_draft=FALSE`, arbitrary `analyst_id`, `status='Converted'`, prefilled AI columns.
+- **Root cause:** Migration `20260415000000_widen_demos_insert_for_sales` gave sales INSERT with no column-level WITH CHECK.
+- **Fix applied:** Migration `20260415000004_constrain_sales_demo_insert.sql` — splits into "Analysts/managers create demos" (unrestricted) + "Sales agents create draft demos" (enforces `is_draft=TRUE AND analyst_id IS NULL AND sales_agent_id=auth.uid() AND status='Pending' AND ai_draft_id IS NULL AND ai_approval_rate IS NULL`).
+- **GUARDRAIL:** When granting INSERT to a role that shouldn't control every column, always express the constraint in WITH CHECK — not in application code alone. RLS is the last line of defence.
+
+### BUG-024: Backend AI Endpoints Unauthenticated
+- **Severity:** Critical — `POST /api/v1/demos/*/analyze` and `/process-recording` accepted any HTTP call. Any network-reachable client could trigger LLM + Whisper costs.
+- **Fix applied:** New [backend/app/auth.py](backend/app/auth.py) `Depends(require_auth)` dependency. Verifies the Supabase JWT, extracts role, rejects non-{analyst,manager}. Frontend attaches `Authorization: Bearer <access_token>` from `supabase.auth.getSession()` — see [lib/store.tsx:402-404](lib/store.tsx#L402).
+- **Architectural correction:** First-pass assumed HS256 + shared secret. Reality: this project mints **ES256** user tokens (asymmetric, verified via the public JWKS endpoint `{SUPABASE_URL}/auth/v1/.well-known/jwks.json`). The dashboard "JWT Secret" signs only legacy anon/service keys. Backend now fetches JWKS via `httpx` + caches per kid (Python urllib's CA bundle fails on macOS without `Install Certificates.command`). New deps: `PyJWT`, `cryptography`.
+- **GUARDRAIL:** Before writing any Supabase JWT verification, decode a real access token's header and read the `alg` field. Never assume HS256 based on dated docs. See user-global memory `feedback_supabase_jwt_alg.md`.
+
+### BUG-025: Seed User Password Committed to Migration History
+- **Severity:** Critical — `ChangeMe123!` was hardcoded in `20260412112906_seed_initial_users.sql`, permanently in git history.
+- **Fix applied:** Migration rewritten to raise `EXCEPTION` unless `current_setting('app.allow_dev_seed', true) = 'true'` AND per-role passwords supplied via session settings. New [scripts/seed-dev-users.sh](scripts/seed-dev-users.sh) reads `$MANAGER_PWD/$ANALYST_PWD/$SALES_PWD` env vars, fails loudly if any are empty.
+- **GUARDRAIL:** No credential — password, API key, JWT secret — ever goes in a committed file, even in a migration. Use session-setting guards + env vars.
+
+### BUG-026: `users` Table Globally Readable
+- **Severity:** Critical — `Read all profiles USING (true)` let any authenticated user enumerate all emails, roles, capacity.
+- **Fix applied:** Migration `20260415000005_narrow_users_read.sql` — drops the wildcard, adds three targeted policies: "Users read self" (always), "Managers read all users", "Analysts read active sales agents" (needed for round-robin auto-assign).
+- **GUARDRAIL:** `USING (true)` on any `SELECT` policy is almost never correct. Narrow to self + role-gated.
+
+### BUG-027: Frozen `NOW` in `ageDays`
+- **Severity:** High — `const NOW = Date.now()` at module scope in `lib/utils.ts` meant every `ageDays()` call used the timestamp from page load. Notifications and age-colours never updated during a session.
+- **Fix applied (Tier 2.1):** Removed `const NOW`; `ageDays` now calls `Date.now()` per invocation.
+- **GUARDRAIL:** Never cache wall-clock values at module scope. If you see `const X = Date.now()` or `const X = new Date()` outside a function, treat it as a bug.
+
+### BUG-028: Client-Assigned Demo PK
+- **Severity:** High — `demoToInsertRow` in `lib/transforms.ts` sent `id: d.id` where `d.id = Date.now()`. Two analysts submitting in the same ms collide; BIGSERIAL bypassed.
+- **Fix applied (Tier 2.3):** `id` dropped from `demoToInsertRow`. `fireInsert` in `lib/supabase-sync.ts` now calls `create_demo_with_pour` RPC (see BUG-029), receives server-assigned id, reconciles optimistic placeholder → server id.
+- **GUARDRAIL:** Never send a client-chosen primary key for a BIGSERIAL column. Use server-assigned ids + optimistic-id reconciliation.
+
+### BUG-029: Non-Atomic Demo + POUR Writes
+- **Severity:** High — `fireInsert` did `demos.insert` then `pour_issues.insert` as two separate calls. Between them, the demo existed with no POUR — any concurrent reader saw partial state. `firePourSync` (edit path) had the same window via DELETE + INSERT.
+- **Fix applied (Tier 2.4):** Migration `20260415000006_create_demo_rpc.sql` creates `create_demo_with_pour(demo_payload jsonb, pour_payload jsonb)` and `update_demo_pour(p_demo_id bigint, next_pour jsonb)` — both `SECURITY INVOKER SET search_path = public`. Both wrap the pair of operations in a single SQL statement. `supabase-sync.ts` calls them via `supabase.rpc(...)`.
+- **GUARDRAIL:** Multi-row writes to related tables must be atomic. If you catch yourself writing "INSERT A then INSERT B" in the client, escalate to an RPC.
+
+### BUG-030: Dashboard Auto-Trigger Thundering Herd
+- **Severity:** High — `app/page.tsx` fired `triggerProcessRecording` / `triggerAnalyze` for EVERY pending demo on every render. A manager with 50 pending demos caused 50 simultaneous Whisper + LLM calls on page load.
+- **Fix applied (Tier 2.5):**
+  1. New `processingDemoIds: Set<number>` in store — populated from `task_queue` rows with `status IN ('running','queued')` on mount + realtime subscription.
+  2. Auto-trigger skips demos in that set.
+  3. Hard-cap `AUTO_TRIGGER_CAP = 3` concurrent triggers per mount via `triggerCountRef`; excess demos get a "skipped N, run manually" toast.
+  4. Migration `20260415000007_widen_task_queue_select.sql` widens `task_queue` SELECT to authenticated (was manager-only) so analysts can check their own task state.
+- **GUARDRAIL:** Any `useEffect` that makes server calls on every render of a changing collection needs a dedup set + a concurrency cap. Cost/rate-limit attacks are usually "you did it to yourself."
+
+### BUG-031: Duplicate AI Runs Without Backend Idempotency
+- **Severity:** High — double-clicking "Retry" or concurrent auto-triggers created duplicate `task_queue` + `demo_drafts` rows. Cost doubled.
+- **Fix applied (Tier 2.6):** Routers now call `base.fetch_running_task` and `base.fetch_pending_draft` before `record_task_start`. Return HTTP 409 Conflict with the existing task/draft id if found. See [backend/app/routers/demos.py](backend/app/routers/demos.py) + [routers/ingest.py](backend/app/routers/ingest.py) + new helpers in [agents/base.py](backend/agents/base.py).
+- **GUARDRAIL:** Any backend endpoint that writes state must be idempotent. Check for an in-flight task / pending output BEFORE starting a new one.
+
+### BUG-032: Middleware DB Round-Trip Per Protected Request
+- **Severity:** Medium — [middleware.ts](middleware.ts) ran `supabase.from("users").select("role")` on every role-gated navigation. Two DB round-trips per page.
+- **Fix applied (Tier 2.7):** Migration `20260415000008_add_role_to_jwt.sql` adds `public.custom_access_token_hook(event jsonb)` that injects `app_role` as a JWT claim. Middleware reads `user.app_metadata.app_role` first, falls back to DB lookup for sessions predating the hook.
+- **Manual step required:** Register the hook in Supabase Dashboard → Authentication → Hooks → "custom_access_token" → select `public.custom_access_token_hook`. Until then, the fallback runs (app still works, just with the round-trip).
+- **GUARDRAIL:** If auth-state is needed on every protected request, cache it in the JWT — not in a per-request DB query.
+
+### BUG-033: TEACHERS Stats Smeared Across Same-Name Different-Tid Teachers
+- **Severity:** High — correctness + broken UX. `app/teachers/page.tsx` stats grouped by `d.teacher` (name string). Two teachers both named "Muhammad Ebraheem" (uid 768 and uid 396) collapsed into one card showing merged conversion rates. Also: analyst form's teacher dropdown used name-as-value, so picking the second "Muhammad Ebraheem" silently captured the first's uid (wrong-tid assignment).
+- **Fix applied (Tier 2.8 + followup):**
+  - [app/teachers/page.tsx](app/teachers/page.tsx) `tStats` grouped by `String(d.tid)`; `drill` state holds tid; drill-down header reads `drillData.name`.
+  - [app/analyst/page.tsx](app/analyst/page.tsx) teacher dropdown `value = String(t.uid)`; submit resolves name+tid by uid; prefill reads `?tid=…` param.
+  - [components/draft-review.tsx](components/draft-review.tsx) reject URL passes `tid=<uid>` alongside `teacher=<name>`.
+  - [app/conducted/page.tsx](app/conducted/page.tsx) + [app/sales/page.tsx](app/sales/page.tsx) filter options deduped by name (filter is name-based).
+- **GUARDRAIL:** When a lookup array has duplicate display names (TEACHERS.name isn't unique), never use the name as React `key` or as select `value` for selection. Use the uid. Grep for `TEACHERS.map` in every PR.
+
+### BUG-034: No Pre-Commit Gate → Shipping Un-Provisioned Integration
+- **Severity:** Meta-incident — the reason Tier 4 exists. On 2026-04-15 during Tier 2 rollout, frontend code that called `supabase.rpc('create_demo_with_pour', …)` was merged **before** the migration introducing that function was applied. Build was green (TypeScript can't see into Postgres). At runtime: every demo create 404'd, UI looked "disturbed," required emergency debugging + manual migration apply.
+- **Fix applied (Tier 4):** New [scripts/smoke.sh](scripts/smoke.sh) = single pre-commit gate. Runs Four Laws + `npm run build` + RPC manifest (probes every `supabase.rpc()` call against live DB via helper `public.list_public_rpcs()` — migration `20260415000009`) + backend auth contract + dev-server reachability. Pre-push git hook installed via [scripts/install-git-hooks.sh](scripts/install-git-hooks.sh) enforces it on every `git push`. Documented in [CLAUDE.md](CLAUDE.md) "Deploy Contract" + "Before You Commit" sections.
+- **Verified by break-one-check test:** deliberately added a phantom `supabase.rpc("totally_missing_rpc_abc", …)` → smoke failed at Phase C with the exact "RPC called from frontend but NOT deployed to DB" message → cleanup restored green.
+- **GUARDRAIL:** `npm run build` is not sufficient for any change that touches DB RPCs, new columns, backend endpoints, or env vars. Always run `./scripts/smoke.sh`. The pre-push hook makes this automatic; `git push --no-verify` only for genuine emergencies.
+
+---

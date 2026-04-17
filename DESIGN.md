@@ -39,6 +39,15 @@ This project implements an Apple-inspired design system. Every UI decision must 
 - Background: `#FFF3E0`
 - Text: `#B25000`
 
+### Processing Status Colors (Sessions)
+| Status | Background | Text | Notes |
+|--------|-----------|------|-------|
+| Pending | `#f0f0f0` | `#86868b` | Neutral gray |
+| Processing | `#fff3cd` | `#856404` | Amber with pulse animation (`sessionPulse 1.5s`) |
+| Scored | `#d4edda` | `#155724` | Green — ready for review |
+| Approved | `#cce5ff` | `#004085` | Blue — finalized |
+| Failed | `#f8d7da` | `#721c24` | Red — error state |
+
 ### Borders
 - Card borders: `#e8e8ed`
 - Subtle separators: `#f0f0f0`, `#f5f5f7`
@@ -251,6 +260,42 @@ Centered icon + text. Used when filters return zero results. Always include guid
 
 ### Confirm Modal
 Full-screen overlay with blur. Used before ALL destructive actions: status changes, bulk updates, kanban drops to terminal columns.
+
+### SearchableSelect (`components/searchable-select.tsx`)
+Click-to-open dropdown replacing native `<select>` on filter surfaces. Features:
+- Type-to-filter with `.apple-input` search box
+- Outside-click / ESC dismiss (same pattern as nav dropdowns)
+- "Clear" row at top for resetting the filter
+- Two variants: `filter-select-dark` (hero bars) / `filter-select-light` (light forms)
+- `buttonClassName` override for form contexts (swaps to `.apple-input .apple-select`)
+- Dropdown: white bg, `border-radius: 12px`, `box-shadow: 0 10px 32px rgba(0,0,0,.12)`, z-index 50
+
+### SessionStatusBadge (`components/session-status-badge.tsx`)
+Five-state pill badge for session processing status. Uses `.session-badge .session-badge-{status}` CSS classes. Processing state has pulse animation. See "Processing Status Colors" in Color Palette.
+
+### CSVUpload (`components/csv-upload.tsx`)
+File upload button with hidden `<input type="file">`. Shows filename after selection. Props: `label`, `onParsed(rows)`, `disabled`. Styled as `.pill .pill-blue`.
+
+### SessionDraftReview (`components/session-draft-review.tsx`)
+8-question AI scorecard review form with per-field accept/edit/reject. Key patterns:
+- Each field has three states: untouched (gray border), accepted (green `#d4edda` border, locked), edited (orange `#fff3cd` border, input unlocked)
+- Score boxes use `scoreColor()` from `lib/scorecard.ts` for color-coding by ratio
+- POUR issues editable via dropdown (validates against `POUR_CATS`)
+- "Accept all" button for batch acceptance
+- Approval bar shows acceptance percentage
+- Layout: `.session-scorecard-grid` (responsive, 1-col on mobile)
+
+### CSS Classes — Product Review
+| Class | Usage |
+|-------|-------|
+| `.review-table-wrap` | Horizontal scroll container for data tables |
+| `.review-table` | Full-width collapsed table (14px font, uppercase headers) |
+| `.review-table tr.clickable` | Pointer cursor + hover highlight for linked rows |
+| `.session-badge` | Base badge: inline-flex, 12px font, pill radius, 500 weight |
+| `.session-badge-{status}` | Status-specific bg/text colors (see Processing Status Colors) |
+| `.session-scorecard-grid` | Responsive grid for scorecard questions (1-col on mobile) |
+| `.filter-select-dark` | Dark-themed filter trigger (for hero bars with dark bg) |
+| `.filter-select-light` | Light-themed filter trigger (for content sections) |
 
 ## Anti-Patterns — Do NOT
 

@@ -2,21 +2,49 @@
 
 A Next.js 15 frontend + Supabase backend for tracking, evaluating, and converting tutoring demo sessions into enrollments. Built for **Tuitional Education** (Karachi) with the Apple design system.
 
-**Status:** Phase 2 complete — Supabase schema, RLS, auth, multi-user, realtime. Phase 3 (Python AI backend) deferred.
+**Status:** Phase 2 (Supabase schema + RLS + auth + realtime) and Phase 3 (FastAPI + LangGraph AI backend) both live. Deploy all three layers — migrations, backend, frontend — in lockstep.
 
 ---
 
-## Quick Start
+## First-time Setup
+
+Every step below must pass before you develop. The smoke gate (step 8) verifies the full stack.
 
 ```bash
+# 1. Clone + install frontend deps
 git clone https://github.com/AI-Tutor1/demotoconversion-.git
 cd demotoconversion-
 npm install
-cp .env.example .env.local   # fill in Supabase URL + anon key
-npm run dev
+
+# 2. Frontend env
+cp .env.example .env.local              # fill in NEXT_PUBLIC_SUPABASE_URL + anon key
+
+# 3. Backend env + venv + deps
+cp backend/.env.example backend/.env    # fill in ANTHROPIC_API_KEY + GROQ_API_KEY + SUPABASE_SERVICE_ROLE_KEY
+python3 -m venv backend/.venv
+source backend/.venv/bin/activate
+pip install -r backend/requirements.txt
+
+# 4. Apply migrations to Supabase (via dashboard SQL editor, supabase CLI, or MCP tool)
+#    Order matters: supabase/migrations/*.sql are timestamp-prefixed.
+
+# 5. Seed dev users — only for a fresh Supabase project
+export MANAGER_PWD=... ANALYST_PWD=... SALES_PWD=...
+export DATABASE_URL="postgresql://postgres:<pwd>@<host>:5432/postgres"
+./scripts/seed-dev-users.sh
+
+# 6. Install git hooks (one-time, runs smoke.sh on every push)
+./scripts/install-git-hooks.sh
+
+# 7. Start processes
+source backend/.venv/bin/activate && uvicorn app.main:app --reload --port 8000 &
+npm run dev  # starts Next.js on :3000
+
+# 8. Green-light gate
+./scripts/smoke.sh                       # must end with "✅ smoke passed"
 ```
 
-Open [http://localhost:3000](http://localhost:3000). Sign in as one of the seeded users (dev passwords are `ChangeMe123!`, rotate before production):
+Sign in at [http://localhost:3000/login](http://localhost:3000/login):
 
 | Email | Role |
 |-------|------|
@@ -24,13 +52,16 @@ Open [http://localhost:3000](http://localhost:3000). Sign in as one of the seede
 | `analyst@demo.pk` | Analyst — own + unassigned demos |
 | `sales@demo.pk` | Sales agent — only assigned demos |
 
-Commands:
+**⚠️ `20260412112906_seed_initial_users.sql` is gated.** It raises an exception unless called with `app.allow_dev_seed = 'true'` + per-role password session settings. Only `scripts/seed-dev-users.sh` satisfies the gate. The migration file itself contains no passwords.
+
+### Commands
 ```bash
-npm run dev      # dev server
-npm run build    # production build (catches type errors)
-npm run start    # serve production build
-npm run lint     # lint
+npm run dev        # Next.js dev server (:3000)
+npm run build      # production TypeScript check + bundle
+./scripts/smoke.sh # full-stack gate (Four Laws + build + RPC manifest + backend + frontend)
 ```
+
+---
 
 ## Tech Stack
 
@@ -41,6 +72,7 @@ npm run lint     # lint
 | State | React Context (`lib/store.tsx`) wired to Supabase |
 | Database | Supabase (Postgres + Auth + Realtime) |
 | Auth | `@supabase/ssr` (cookie-based, SSR-safe) |
+| Product Review | Enrollment + Session CSV upload → AI scorecard (same 8-Q framework) |
 | Deployment (planned) | Vercel (frontend) + Supabase Cloud |
 
 Dependencies are minimal: `next`, `react`, `react-dom`, `recharts`, `@supabase/supabase-js`, `@supabase/ssr`. No state manager, no component library, no date library, no CSS framework — see MEMORY.md Part 6 for rejected approaches.

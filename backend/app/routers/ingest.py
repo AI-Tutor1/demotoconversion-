@@ -14,11 +14,12 @@ from __future__ import annotations
 import asyncio
 from datetime import datetime, timezone
 
-import anthropic
 import httpx
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status
+from openai import OpenAIError
 
 from agents import base, demo_analyst, ingest
+from app.auth import AuthUser, require_auth
 from app.models import ProcessRecordingResponse
 from app.supabase_client import get_supabase
 
@@ -45,13 +46,25 @@ async def _update_transcript(demo_id: int, transcript: str) -> None:
     response_model=ProcessRecordingResponse,
     summary="Download the recording, transcribe via Whisper, auto-chain into Demo Analyst",
 )
-async def process_recording(demo_id: int) -> ProcessRecordingResponse:
+async def process_recording(
+    demo_id: int,
+    user: AuthUser = Depends(require_auth),
+) -> ProcessRecordingResponse:
     # 1. Fetch demo
     demo = await base.fetch_demo(demo_id)
     if demo is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Demo {demo_id} not found",
+        )
+
+    # 1a. Authorise — analysts, managers, and sales agents may trigger ingestion.
+    # RLS already scopes sales agents to their own demos; this gate rejects
+    # any other unanticipated role (e.g. "viewer") at the application layer.
+    if user.role not in ("analyst", "manager", "sales_agent"):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only analysts, managers, and sales agents may trigger recording processing",
         )
 
     # 2. Validate recording URL format BEFORE starting a task row
@@ -66,7 +79,24 @@ async def process_recording(demo_id: int) -> ProcessRecordingResponse:
             detail="Recording URL is not a recognized Google Drive sharing link.",
         )
 
-    # 3. Start task (ingest). Every failure path below updates this row.
+    # 3. Idempotency: if an ingest task is already running/queued, return 409.
+    existing_ingest_id = await base.fetch_running_task(demo_id, ingest.AGENT_NAME)
+    if existing_ingest_id is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Recording ingest already in progress (task_id={existing_ingest_id}). Wait for it to complete.",
+        )
+
+    # Also block if a pending_review draft already exists — the analyst has
+    # an unresolved scorecard. Don't stack a second pipeline run on top of it.
+    existing_draft = await base.fetch_pending_draft(demo_id)
+    if existing_draft is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"A pending draft already exists for demo {demo_id} (draft_id={existing_draft}). Approve or reject it before re-processing.",
+        )
+
+    # 4. Start task (ingest). Every failure path below updates this row.
     ingest_started_at = datetime.now(timezone.utc)
     ingest_task_id = await base.record_task_start(demo_id, ingest.AGENT_NAME)
 
@@ -174,10 +204,23 @@ async def process_recording(demo_id: int) -> ProcessRecordingResponse:
             )
         except Exception:  # noqa: BLE001
             pass
+
+        # 8. Auto-approve: write flat scorecard fields onto the demo row and
+        # flip is_draft=False so the demo becomes visible on the Sales page.
+        # Non-fatal — if this fails the draft remains in pending_review and an
+        # analyst can approve manually from /drafts.
+        try:
+            await base.auto_approve_draft(
+                demo_id=demo_id,
+                draft_id=analysis_draft_id,
+                draft=agent_result.draft,
+            )
+        except Exception:  # noqa: BLE001
+            pass
     except (
         asyncio.TimeoutError,
         ValueError,
-        anthropic.AnthropicError,
+        OpenAIError,
         Exception,
     ) as exc:
         # Every analysis failure falls through to "transcription_only" — the
