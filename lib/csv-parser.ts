@@ -60,6 +60,20 @@ function cleanNumeric(v: string, maxAbs = 99_999_999.99): string {
 }
 
 /**
+ * Normalize an LMS ID exported from Excel as a float: "22506.0" → "22506".
+ * The DB stores these as bare integer strings; without this, session_id /
+ * enrollment_id (FK) carry a trailing ".0" and the FK to enrollments fails.
+ */
+function cleanId(v: string): string {
+  const t = cleanNA(v);
+  if (!t) return "";
+  // Match integer-valued floats only (e.g. "649.0", "22506.00"); leave
+  // anything non-integer-looking (e.g. "ABC-1") untouched.
+  const m = t.match(/^(\d+)\.0+$/);
+  return m ? m[1] : t;
+}
+
+/**
  * Parse the LMS "Enrollment Name" field (only present in the log CSV).
  * Format: "{student}/{teacher} - | {curriculum} | {board} | {grade} | {subject}"
  */
@@ -141,9 +155,9 @@ export function mapEnrollmentRow(
   );
 
   return {
-    enrollment_id: cleanNA(row["enrollmentid"] ?? row["enrollment_id"] ?? ""),
-    teacher_id: cleanNA(row["teacherid"] ?? row["teacher_id"] ?? ""),
-    student_id: cleanNA(row["studentid"] ?? row["student_id"] ?? ""),
+    enrollment_id: cleanId(row["enrollmentid"] ?? row["enrollment_id"] ?? ""),
+    teacher_id: cleanId(row["teacherid"] ?? row["teacher_id"] ?? ""),
+    student_id: cleanId(row["studentid"] ?? row["student_id"] ?? ""),
     teacher_name: cleanNA(row["teachername"] ?? row["teacher_name"] ?? row["teacher"] ?? ""),
     student_name: cleanNA(
       row["studentname"] ?? row["student_name"] ?? row["students"] ?? row["student"] ?? ""
@@ -171,8 +185,10 @@ export function mapSessionRow(
   row: Record<string, string>
 ): Record<string, string> {
   return {
-    session_id: row["sessionid"] ?? row["session_id"] ?? "",
-    enrollment_id: row["enrollmentid"] ?? row["enrollment_id"] ?? "",
+    // LMS IDs come from Excel as floats ("22506.0"); cleanId normalizes to "22506"
+    // so the FK to enrollments (stored as bare integer strings) matches.
+    session_id: cleanId(row["sessionid"] ?? row["session_id"] ?? ""),
+    enrollment_id: cleanId(row["enrollmentid"] ?? row["enrollment_id"] ?? ""),
     scheduled_time: row["scheduledtimeforsession"] ?? row["scheduled_time"] ?? row["scheduledtime"] ?? "",
     tutor_name: row["tutorname"] ?? row["tutor_name"] ?? "",
     expected_student_1: row["expectedstudent1"] ?? row["expected_student_1"] ?? "",
@@ -182,12 +198,16 @@ export function mapSessionRow(
     grade: row["grade"] ?? "",
     curriculum: row["curriculum"] ?? "",
     enrollment_name: row["enrollmentname"] ?? row["enrollment_name"] ?? "",
-    tutor_class_time: row["tutorclasstime"] ?? row["tutor_class_time"] ?? "",
-    tutor_scaled_class_time: row["tutorscaledclasstime"] ?? row["tutor_scaled_class_time"] ?? "",
-    class_scheduled_duration: row["classscheduledduration"] ?? row["class_scheduled_duration"] ?? "",
-    student_1_class_time: row["student1classtime"] ?? row["student_1_class_time"] ?? "",
-    student_2_class_time: row["student2classtime"] ?? row["student_2_class_time"] ?? "",
-    session_date: row["date"] ?? row["sessiondate"] ?? row["session_date"] ?? "",
+    // Numeric fields: the LMS emits sentinel strings like "No Class Time" on
+    // No Show / Teacher Absent / Student Absent rows. cleanNumeric coalesces
+    // those to "" so the RPC's NULLIF(...)::numeric resolves to NULL instead
+    // of throwing "invalid input syntax for type numeric" and aborting the batch.
+    tutor_class_time: cleanNumeric(row["tutorclasstime"] ?? row["tutor_class_time"] ?? ""),
+    tutor_scaled_class_time: cleanNumeric(row["tutorscaledclasstime"] ?? row["tutor_scaled_class_time"] ?? ""),
+    class_scheduled_duration: cleanNumeric(row["classscheduledduration"] ?? row["class_scheduled_duration"] ?? ""),
+    student_1_class_time: cleanNumeric(row["student1classtime"] ?? row["student_1_class_time"] ?? ""),
+    student_2_class_time: cleanNumeric(row["student2classtime"] ?? row["student_2_class_time"] ?? ""),
+    session_date: parseDate(row["date"] ?? row["sessiondate"] ?? row["session_date"] ?? ""),
     class_status: row["classstatus"] ?? row["class_status"] ?? "",
     notes: row["notes"] ?? "",
     attended_student_1: row["attendedstudent1"] ?? row["attended_student_1"] ?? "",
@@ -195,6 +215,8 @@ export function mapSessionRow(
     teacher_transaction_1: row["teachertransaction1"] ?? row["teacher_transaction_1"] ?? "",
     student_transaction_1: row["studenttransaction1"] ?? row["student_transaction_1"] ?? "",
     student_transaction_2: row["studenttransaction2"] ?? row["student_transaction_2"] ?? "",
-    recording_link: row["recordinglink"] ?? row["recording_link"] ?? "",
+    // "Meet Recording" (normalizes to "meetrecording") is the LMS's current column
+    // name for the Google Drive URL. Older exports used "recording_link" directly.
+    recording_link: row["meetrecording"] ?? row["recordinglink"] ?? row["recording_link"] ?? "",
   };
 }
