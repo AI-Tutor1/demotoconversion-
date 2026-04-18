@@ -34,14 +34,20 @@ export default function SessionDetailPage() {
       flash("Not authenticated");
       return;
     }
+    // Smart dispatch: if transcript exists, the ingest step already succeeded
+    // (analyst must have failed) — retry analyst-only via /analyze to avoid
+    // re-downloading + re-transcribing, which would burn Whisper quota.
+    // No transcript → full /process-recording path.
+    const hasTranscript = !!session.transcript && session.transcript.trim().length > 0;
+    const endpoint = hasTranscript ? "analyze" : "process-recording";
     setRetrying(true);
     try {
       const res = await fetch(
-        `${backendUrl}/api/v1/sessions/${session.id}/process-recording`,
+        `${backendUrl}/api/v1/sessions/${session.id}/${endpoint}`,
         { method: "POST", headers: { Authorization: `Bearer ${token}` } }
       );
       if (res.ok) {
-        flash("Retry queued — the pipeline will run in the background");
+        flash(hasTranscript ? "Re-analyzing transcript…" : "Retry queued — the pipeline will run in the background");
       } else if (res.status === 409) {
         flash("Processing is already in progress for this session");
       } else {

@@ -152,9 +152,15 @@ async def _run_ingest_chain(session_id: int, recording_link: str) -> None:
         except Exception:  # noqa: BLE001
             pass
     except (asyncio.TimeoutError, ValueError, OpenAIError, Exception) as exc:
-        # Transcript is saved; leave session as processing so analyst can be
-        # manually retried via POST /analyze without re-downloading.
-        await base.record_task_failed(analysis_task_id, f"Auto-chained analysis failed: {exc}")
+        # str(exc) is frequently empty for Groq parse errors / bare Exceptions —
+        # capture type name + repr so task_queue.error_message has real diagnostic.
+        error_detail = f"Analyst failed: {type(exc).__name__}: {exc!r}"
+        await base.record_task_failed(analysis_task_id, error_detail)
+        # Flip status to 'failed' so the UI surfaces its Retry button. The
+        # frontend Retry handler detects the existing transcript and calls
+        # /analyze (not /process-recording), so this recovery path does NOT
+        # re-download the recording or burn Whisper quota.
+        await asyncio.to_thread(_update_session_status_sync, session_id, "failed")
 
 
 @router.post(
