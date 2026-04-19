@@ -84,6 +84,7 @@ interface StoreContextType {
   rejectDraft: (draftId: string) => Promise<void>;
   processingDemoIds: Set<number>;
   approvedSessions: ApprovedSession[];
+  sessionTeachers: { teacherUserName: string; teacherUserId: string | null }[];
   stats: {
     total: number;
     converted: number;
@@ -112,6 +113,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const [drafts, setDrafts] = useState<DemoDraft[]>([]);
   const [processingDemoIds, setProcessingDemoIds] = useState<Set<number>>(new Set());
   const [approvedSessions, setApprovedSessions] = useState<ApprovedSession[]>([]);
+  const [sessionTeachers, setSessionTeachers] = useState<{ teacherUserName: string; teacherUserId: string | null }[]>([]);
 
   const processedRealtimeIds = useRef<Set<number>>(new Set());
   const processedRealtimeDraftIds = useRef<Set<string>>(new Set());
@@ -221,6 +223,28 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     setApprovedSessions(mapped);
   }, []);
 
+  // Distinct session teachers (all statuses) — powers the /teachers card grid so
+  // every tutor with any session gets a card, not only those with approved sessions.
+  const fetchSessionTeachers = useCallback(async (role: UserProfile["role"] | null) => {
+    if (role !== "analyst" && role !== "manager") {
+      setSessionTeachers([]);
+      return;
+    }
+    const { data } = await supabase
+      .from("sessions")
+      .select("teacher_user_name, teacher_user_id")
+      .not("teacher_user_name", "is", null);
+    const seen = new Set<string>();
+    const unique: { teacherUserName: string; teacherUserId: string | null }[] = [];
+    for (const row of (data ?? []) as { teacher_user_name: string; teacher_user_id: string | null }[]) {
+      const key = (row.teacher_user_name ?? "").toLowerCase();
+      if (!key || seen.has(key)) continue;
+      seen.add(key);
+      unique.push({ teacherUserName: row.teacher_user_name, teacherUserId: row.teacher_user_id ?? null });
+    }
+    setSessionTeachers(unique);
+  }, []);
+
   const fetchProcessingDemoIds = useCallback(async () => {
     const { data } = await supabase
       .from("task_queue")
@@ -246,13 +270,15 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     if (profileRes.error || !profileRes.data) {
       setUser(null);
       fetchApprovedSessions(null);
+      fetchSessionTeachers(null);
     } else {
       const profile = profileRes.data as UserProfile;
       setUser(profile);
       fetchApprovedSessions(profile.role);
+      fetchSessionTeachers(profile.role);
     }
     setSalesAgents((agentsRes.data as UserProfile[] | null) ?? []);
-  }, [fetchApprovedSessions]);
+  }, [fetchApprovedSessions, fetchSessionTeachers]);
 
   useEffect(() => {
     const { data } = supabase.auth.onAuthStateChange((event) => {
@@ -272,6 +298,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         setDrafts([]);
         setProcessingDemoIds(new Set());
         setApprovedSessions([]);
+        setSessionTeachers([]);
         setLoading(false);
       }
     });
@@ -442,6 +469,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         { event: "*", schema: "public", table: "sessions" },
         () => {
           fetchApprovedSessions(user.role);
+          fetchSessionTeachers(user.role);
         }
       )
       .on(
@@ -455,7 +483,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [user?.role, fetchApprovedSessions]);
+  }, [user?.role, fetchApprovedSessions, fetchSessionTeachers]);
 
   // ─── Realtime: task_queue (keep processingDemoIds in sync) ──────
   useEffect(() => {
@@ -782,6 +810,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         rejectDraft,
         processingDemoIds,
         approvedSessions,
+        sessionTeachers,
         stats,
       }}
     >

@@ -14,7 +14,7 @@ import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from "recha
 type TabKey = "dashboard" | "product" | "demos" | "reviews";
 
 export default function TeachersPage() {
-  const { rangedDemos: demos, draftsByDemoId, user, approvedSessions } = useStore();
+  const { rangedDemos: demos, draftsByDemoId, user, approvedSessions, sessionTeachers } = useStore();
   const [sortBy, setSortBy] = useState("rate-desc");
   const [drill, setDrill] = useState<string | null>(null);
   const [tab, setTab] = useState<TabKey>("dashboard");
@@ -34,16 +34,14 @@ export default function TeachersPage() {
       t.demos.push(d);
     });
 
-    // Also surface teachers who only have approved *sessions* (no demos yet) by
-    // adding a zero-KPI card — otherwise their Product log would be unreachable.
-    // Name-based lookup into the TEACHERS roster to resolve tid; skip if unknown.
+    // Surface all teachers who have any session (not just approved) so their
+    // profile card is reachable. The Product log tab inside still shows only
+    // approved sessions — this only controls card visibility.
     if (canSeeProductLog) {
       const nameToTid = new Map(TEACHERS.map((t) => [t.name.toLowerCase(), t.uid]));
-      const seenNames = new Set<string>();
-      approvedSessions.forEach((s) => {
-        const nm = (s.teacherUserName ?? "").trim();
-        if (!nm || seenNames.has(nm.toLowerCase())) return;
-        seenNames.add(nm.toLowerCase());
+      sessionTeachers.forEach((st) => {
+        const nm = st.teacherUserName.trim();
+        if (!nm) return;
         const tid = nameToTid.get(nm.toLowerCase());
         if (!tid) return;
         const key = String(tid);
@@ -58,7 +56,7 @@ export default function TeachersPage() {
     if (sortBy === "volume-desc") arr.sort((a, b) => b.total - a.total);
     if (sortBy === "name") arr.sort((a, b) => a.name.localeCompare(b.name));
     return arr;
-  }, [demos, sortBy, approvedSessions, canSeeProductLog]);
+  }, [demos, sortBy, sessionTeachers, canSeeProductLog]);
 
   // drill holds the tid string (unique per teacher) rather than the name.
   const drillData = drill ? tStats.find((t) => String(t.tid) === drill) : null;
