@@ -50,15 +50,29 @@ curl -s https://product.talimatedu.com/login | grep -oE '_next/static/chunks/[a-
 
 ### Deploy a change (backend)
 
+The backend Python venv path on this VPS isn't `.venv` — pm2 manages the backend through a bash wrapper. On 2026-04-19 the activate-venv step in a deploy failed with `-bash: .venv/bin/activate: No such file or directory`, but the pm2 restart still picked up the new code (no new deps to install), so it was a no-op annoyance, not a breakage. When backend has NEW Python deps, find the venv before pip-installing:
+
 ```bash
 ssh root@72.61.195.234
 cd /var/www/app/backend
-git pull origin main   # if the change is in backend/ only; otherwise skip (pulled by frontend already)
-source .venv/bin/activate && pip install -r requirements.txt && deactivate
+# Pull (if frontend block didn't already):
+git pull origin main
+
+# Find the real venv (only needed when requirements.txt changed):
+find /var/www/app /root -maxdepth 4 -name 'activate' -path '*bin*' 2>/dev/null
+# Typical output: /var/www/app/backend/venv/bin/activate (or similar)
+# Then, using that path:
+#   source /var/www/app/backend/venv/bin/activate
+#   pip install -r requirements.txt
+#   deactivate
+
+# Restart either way:
 pm2 restart backend
 pm2 logs backend --lines 40 --nostream
 exit
 ```
+
+When there are **no new Python deps** (the common case for a pure-logic fix), just `pm2 restart backend` — pm2 re-execs the existing wrapper and the restart picks up the new `.py` files.
 
 ### Migrations
 
