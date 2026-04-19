@@ -239,7 +239,114 @@ gridTemplateColumns: "minmax(0,1fr) minmax(0,300px)"
 
 // Kanban (5 fixed columns with horizontal scroll)
 gridTemplateColumns: "repeat(5, minmax(170px, 1fr))"
+
+// Filter panel — outer (grid-level) and drill-level
+gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))"  // outer
+gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))"  // drill-nested
 ```
+
+## Filter Pattern
+
+Every list/grid page (`/enrollments`, `/sales`, `/conducted`, `/sessions`, `/teachers`) uses the same three-layer filter composition. Do not fork the layout — replicate it field-for-field so keyboard muscle memory transfers across pages.
+
+### Three layers
+1. **Primary filters** — always visible. Live in the page hero (dark or `LIGHT_GRAY`); status pills + a few high-value `SearchableSelect` dropdowns + `Sort`. Never collapse.
+2. **Toolbar** — a single row in the content section: `Filters` toggle · freeform `.apple-input` search (maxWidth 320) · right-aligned count ("N items"). Always visible when the page has data.
+3. **Collapsible panel** — secondary dropdowns, revealed by the toolbar toggle. Hidden by default so the page's content dominates.
+
+### Toolbar — `Filters` toggle
+Outlined Apple Blue when closed; filled Apple Blue when open. Icon is a 15px three-line-with-dots glyph (13px in drill variant). When any filter is active, a 16px bullet (●) badges the button — white-on-translucent when panel is open, white-on-BLUE when closed.
+
+```tsx
+padding: "8px 14px"; borderRadius: 10; fontSize: 14;
+border: `1px solid ${BLUE}`;
+background: showFilters ? BLUE : "transparent";
+color:      showFilters ? "#fff" : BLUE;
+```
+
+### Panel layout
+```tsx
+padding: 16; borderRadius: 14; gap: 12;
+display: "grid";
+gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))";
+alignItems: "end";
+```
+
+Every field is a stacked label-over-control:
+```tsx
+const LABEL: React.CSSProperties = {
+  fontSize: 11, fontWeight: 600, color: MUTED,
+  textTransform: "uppercase", letterSpacing: "0.04em",
+  marginBottom: 4, display: "block",
+};
+const FIELD: React.CSSProperties = { display: "flex", flexDirection: "column" };
+
+<div style={FIELD}>
+  <label style={LABEL}>Field name</label>
+  <SearchableSelect options={toOpts(...)} buttonClassName="apple-input" width="100%" ... />
+</div>
+```
+
+### Background contrast rule
+The panel must visually separate from the surrounding content. Choose the opposite surface:
+
+| Content section bg | Panel bg | Panel border |
+|--------------------|----------|--------------|
+| `#fff` (white) | `LIGHT_GRAY` | none |
+| `LIGHT_GRAY` | `#fff` | `1px solid #e8e8ed` |
+
+Pages using white content (`/enrollments`, `/conducted`, `/sessions`, `/teachers`) get `LIGHT_GRAY` panels. `/sales` is the inverse — its content is `LIGHT_GRAY` so its panel is white with a border.
+
+### Clear button
+Placed as the **last grid cell** of the panel, only rendered when `hasFilters === true`. Outlined blue, full width of its cell:
+```tsx
+background: "transparent"; color: BLUE; border: `1px solid ${BLUE}`;
+padding: "10px 16px"; borderRadius: 10; fontSize: 13; fontWeight: 500;
+```
+`Clear filters` resets **every** filter on the page, including those rendered in the primary hero (Status pills reset to "All", Teacher/Agent dropdowns reset to ""). "Clear" means clear everything.
+
+### Option-list derivation
+Dropdown options MUST be derived from live data via `useMemo`, not from static lookup tables — so filters only offer values actually present in the current result set. Helpers used on every page:
+```ts
+function uniqSort(values: (string | null | undefined)[]): string[] {
+  return Array.from(new Set(values.filter((v): v is string => !!v)))
+    .sort((a, b) => a.localeCompare(b));
+}
+function toOpts(arr: string[]) { return arr.map((v) => ({ value: v, label: v })); }
+```
+
+**Exception:** `ACCT_TYPES` unions static + live values so Sales/Product/Consumer always appear even before any Not-Converted demo has been tagged.
+
+### Pagination + selection resets
+- **Paginated pages** (`/enrollments`, `/sessions`) — reset `page` to 0 on any filter change. `/sessions` uses a dedicated `useEffect` keyed on every filter state; `/enrollments` does it inline in each `onChange`.
+- **Master-detail** (`/sales`) — selection state is not cleared automatically; the detail panel continues to show a previously-selected demo even if filters would hide its card. If this ever confuses users, clear `selDemo` in a `useEffect` keyed on filters.
+
+### Drill-level variant
+The `/teachers` drill-down card uses a **nested** filter toolbar at reduced scale:
+```tsx
+// button
+padding: "6px 12px"; borderRadius: 10; fontSize: 13;
+// panel
+padding: 14; borderRadius: 12; gap: 10;
+gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))";
+```
+Drill-level state is prefixed `d*` (`dSearch`, `dSubject`, `dDateFrom`, …) to distinguish from the outer grid-level filters. A `useEffect` keyed on `[drill]` resets the drill state whenever the user drills into a different entity, so filters do not leak between profiles. The architectural rationale (one filter toolbar → all 4 child tabs) lives in [memory/reference_drill_panel_filter_flow.md](...).
+
+### Per-page filter inventory
+| Page | Primary (hero) | Secondary (collapsible panel) |
+|------|----------------|-------------------------------|
+| `/enrollments` | — | Teacher · Student · Subject · Grade · Board · Curriculum · Status · Admin · Enrollment ID · Teacher ID · Student ID · Date From · Date To |
+| `/sales` | Status pills · Teacher · Agent · Sort | Workflow stage · Age bucket · Analyst approval · Account type · Min rating · Student · Subject · Level · Grade · POUR · Marketing · Has recording · Date From · Date To |
+| `/conducted` | Status pills · Teacher · Level · Subject · Sort | Workflow stage · Age bucket · Analyst approval · Account type · Min rating · Agent · Student · Grade · POUR · Marketing · Has recording · Date From · Date To |
+| `/sessions` | — (moved to panel) | Processing status · Class status · Teacher · Student · Subject · Grade · Board · Curriculum · Enrollment ID · Attended · Has recording · Has transcript · Date From · Date To |
+| `/teachers` (grid) | Sort | Min demos · Conversion bucket · Min rating · Has POUR · POUR category · Subject · Level · Grade · Account type · Has product log · Has demos · Has demo of status · Marketing · Teacher ID |
+| `/teachers` (drill) | — | Subject · Grade · Demo status · Session processing · POUR · Min rating · Has recording · Date From · Date To |
+
+### Page-specific rules
+- **`/teachers` "Has product log"** matches by `teacher_user_id` (stable FK) not by name. See [memory/feedback_join_by_stable_fk.md](...) — name-based matching silently returned zero rows when `teacher_user_name` drifted (whitespace, casing, nbsp).
+- **`/teachers` "Has demos"** enables finding teachers that only exist in `sessions` with zero `demos` (or vice versa). See [memory/project_entities_loosely_coupled.md](...).
+- **`/sessions` "Teacher" dropdown** unions `teacher_user_name` ∪ `tutor_name` (different columns, overlapping reality). Same union for Student across `student_user_name` ∪ `expectedStudent1` ∪ `expectedStudent2`.
+- **`/teachers` drill option lists** (Subject, Grade, POUR) union demo-side and session-side values for the current teacher — so a subject the teacher only teaches via sessions still appears in the dropdown.
 
 ## Component Patterns
 

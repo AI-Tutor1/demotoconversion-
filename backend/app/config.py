@@ -33,6 +33,18 @@ class Settings(BaseSettings):
     # Cooldown after any other transient error (timeout, parse, network).
     auto_retry_generic_backoff_minutes: int = 5
 
+    # ─── Data-quality audit (every-Nhr linkage invariant check) ───
+    # Kill switch — when false the audit job still registers but every
+    # tick no-ops. Intentionally symmetric with auto_retry_enabled so a
+    # single env change can quiet both.
+    audit_enabled: bool = True
+    # How often the audit wakes up. Cheap query (four small SELECTs),
+    # but 6h is enough to catch drift within a business day.
+    audit_interval_hours: int = 6
+    # A session in `scored/pending_review` older than this many days is
+    # flagged as analyst backlog. Set to 0 to disable the probe.
+    audit_stuck_review_days: int = 3
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",

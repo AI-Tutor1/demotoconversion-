@@ -9,6 +9,7 @@ import type {
   DraftData,
   Enrollment,
   Session,
+  TeacherSession,
 } from "@/lib/types";
 
 // ─── Enrollment DB row shape ────────────────────────────────
@@ -167,5 +168,31 @@ export function dbRowToApprovedSession(row: ApprovedSessionRow): ApprovedSession
     improvementSuggestions: draft.draft_data?.improvement_suggestions ?? "",
     reviewedAt: draft.reviewed_at,
     draftStatus: draft.status,
+  };
+}
+
+// Optional-draft counterpart of ApprovedSession — powers the /teachers
+// Product log so every session surfaces (pending / processing / scored /
+// approved / failed). Scorecard fields stay null until a draft exists.
+type TeacherSessionRow = SessionRow & {
+  session_drafts?: {
+    draft_data: DraftData | null;
+    status: DemoDraftStatus;
+    reviewed_at: string | null;
+  }[] | null;
+};
+
+export function dbRowToTeacherSession(row: TeacherSessionRow): TeacherSession {
+  const draft = row.session_drafts?.[0] ?? null;
+  const base = dbRowToSession(row);
+  return {
+    ...base,
+    scorecardTotal: draft?.draft_data?.total_score ?? null,
+    scoreInterpretation: draft?.draft_data?.score_interpretation ?? null,
+    pourIssues: draft?.draft_data?.pour_issues ?? [],
+    overallSummary: draft?.draft_data?.overall_summary ?? null,
+    improvementSuggestions: draft?.draft_data?.improvement_suggestions ?? null,
+    reviewedAt: draft?.reviewed_at ?? null,
+    draftStatus: draft?.status ?? null,
   };
 }

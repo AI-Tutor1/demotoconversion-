@@ -25,11 +25,12 @@ from openai import OpenAIError
 from agents import base, demo_analyst, ingest
 from app.auth import AuthUser, require_auth
 from app.models import (
+    AuditLinkageResponse,
     AutoRetryResponse,
     SessionAnalysisResponse,
     SessionProcessRecordingResponse,
 )
-from app.scheduler import auto_retry_failed_sessions
+from app.scheduler import audit_session_linkage, auto_retry_failed_sessions
 from app.supabase_client import get_supabase
 
 router = APIRouter()
@@ -364,3 +365,31 @@ async def auto_retry_failed_endpoint(
         )
     summary = await auto_retry_failed_sessions()
     return AutoRetryResponse(**summary)
+
+
+@router.post(
+    "/audit-linkage",
+    response_model=AuditLinkageResponse,
+    summary="Manually trigger one tick of the data-quality audit",
+)
+async def audit_linkage_endpoint(
+    user: AuthUser = Depends(require_auth),
+) -> AuditLinkageResponse:
+    """On-demand equivalent of the scheduled audit tick.
+
+    Runs the same probes as the APScheduler job in app/scheduler.py —
+    null teacher linkage, orphan enrollment, unrostered teacher, stuck
+    pending review, and the critical `approved_not_surfaced` invariant
+    that guarantees every approved session appears on /teachers.
+
+    Results persist to public.data_quality_issues (idempotent via the
+    unique partial index). Managers view the issue ledger at
+    /admin/data-quality.
+    """
+    if user.role not in ("analyst", "manager"):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only analysts and managers may trigger the linkage audit",
+        )
+    summary = await audit_session_linkage()
+    return AuditLinkageResponse(**summary)

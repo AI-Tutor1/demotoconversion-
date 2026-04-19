@@ -11,9 +11,45 @@ import { mapSessionRow } from "@/lib/csv-parser";
 import CSVUpload from "@/components/csv-upload";
 import SessionStatusBadge from "@/components/session-status-badge";
 import { EmptyState } from "@/components/ui";
+import { SearchableSelect } from "@/components/searchable-select";
 
 const PAGE_SIZE = 25;
 const MAX_CONCURRENT = 5;
+
+// ─── Static filter option sets ────────────────────────────────────────
+
+const PROCESSING_STATUS_OPTS: { value: string; label: string }[] = [
+  { value: "pending",    label: "Pending" },
+  { value: "processing", label: "Processing" },
+  { value: "scored",     label: "Scored" },
+  { value: "approved",   label: "Approved" },
+  { value: "failed",     label: "Failed" },
+];
+
+const YESNO: { value: string; label: string }[] = [
+  { value: "yes", label: "Yes" },
+  { value: "no",  label: "No" },
+];
+
+const LABEL: React.CSSProperties = {
+  fontSize: 11,
+  fontWeight: 600,
+  color: MUTED,
+  textTransform: "uppercase",
+  letterSpacing: "0.04em",
+  marginBottom: 4,
+  display: "block",
+};
+const FIELD: React.CSSProperties = { display: "flex", flexDirection: "column" };
+
+function uniqSort(values: (string | null | undefined)[]): string[] {
+  return Array.from(new Set(values.filter((v): v is string => !!v))).sort((a, b) =>
+    a.localeCompare(b),
+  );
+}
+function toOpts(arr: string[]) {
+  return arr.map((v) => ({ value: v, label: v }));
+}
 
 export default function SessionsPage() {
   const { flash, user } = useStore();
@@ -21,9 +57,25 @@ export default function SessionsPage() {
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
   const [processing, setProcessing] = useState(false);
-  const [search, setSearch] = useState("");
-  const [fStatus, setFStatus] = useState<"all" | SessionProcessingStatus>("all");
   const [page, setPage] = useState(0);
+
+  // Primary-filter state
+  const [showFilters, setShowFilters] = useState(false);
+  const [search, setSearch] = useState("");
+  const [fProcStatus, setFProcStatus] = useState<"" | SessionProcessingStatus>("");
+  const [fClassStatus, setFClassStatus] = useState("");
+  const [fTeacher, setFTeacher] = useState("");
+  const [fStudent, setFStudent] = useState("");
+  const [fSubject, setFSubject] = useState("");
+  const [fGrade, setFGrade] = useState("");
+  const [fBoard, setFBoard] = useState("");
+  const [fCurriculum, setFCurriculum] = useState("");
+  const [fEnrollId, setFEnrollId] = useState("");
+  const [fAttended, setFAttended] = useState("");
+  const [fRecording, setFRecording] = useState("");
+  const [fTranscript, setFTranscript] = useState("");
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
 
   const fetchSessions = useCallback(async () => {
     const { data, error } = await supabase
@@ -185,6 +237,39 @@ export default function SessionsPage() {
       return;
     }
 
+    // Pre-upload probe: every session's enrollment_id must exist in the
+    // enrollments table. Otherwise the DB trigger will abort the batch
+    // transaction mid-INSERT. Check first and bail out with a clear
+    // message so the uploader knows to upload the enrollment CSV first.
+    const enrollmentIds = Array.from(new Set(valid.map((r) => r.enrollment_id)));
+    const existingRows: { enrollment_id: string }[] = [];
+    for (let i = 0; i < enrollmentIds.length; i += 500) {
+      const chunk = enrollmentIds.slice(i, i + 500);
+      const { data: enrData, error: enrErr } = await supabase
+        .from("enrollments")
+        .select("enrollment_id")
+        .in("enrollment_id", chunk);
+      if (enrErr) {
+        flash(`Couldn't verify enrollments: ${enrErr.message}`);
+        setUploading(false);
+        return;
+      }
+      existingRows.push(...(enrData ?? []));
+    }
+    const existingSet = new Set(existingRows.map((r) => r.enrollment_id));
+    const orphanEnrollmentIds = enrollmentIds.filter((id) => !existingSet.has(id));
+    if (orphanEnrollmentIds.length > 0) {
+      const preview = orphanEnrollmentIds.slice(0, 3).join(", ");
+      const suffix = orphanEnrollmentIds.length > 3
+        ? ` (+${orphanEnrollmentIds.length - 3} more)`
+        : "";
+      flash(
+        `${orphanEnrollmentIds.length} enrollment${orphanEnrollmentIds.length !== 1 ? "s" : ""} missing: ${preview}${suffix}. Upload enrollments CSV first — no sessions were inserted.`
+      );
+      setUploading(false);
+      return;
+    }
+
     // Batch in chunks of 500
     const allTriggerIds: number[] = [];
     for (let i = 0; i < valid.length; i += 500) {
@@ -208,7 +293,26 @@ export default function SessionsPage() {
       }
     }
 
-    flash(`${valid.length} session${valid.length !== 1 ? "s" : ""} upserted`);
+    // Post-upload belt-and-braces: verify every inserted row has teacher
+    // linkage. The DB trigger guarantees this, but if the trigger is ever
+    // dropped (or new code path sneaks in), this catches the drift early.
+    const parsedSessionIds = valid.map((r) => r.session_id);
+    const { data: verifyRows } = await supabase
+      .from("sessions")
+      .select("session_id, teacher_user_id, teacher_user_name")
+      .in("session_id", parsedSessionIds);
+    const unlinkedCount = (verifyRows ?? []).filter(
+      (r: { teacher_user_id: string | null; teacher_user_name: string | null }) =>
+        !r.teacher_user_id || !r.teacher_user_name
+    ).length;
+
+    if (unlinkedCount > 0) {
+      flash(
+        `${valid.length} session${valid.length !== 1 ? "s" : ""} upserted · ⚠ ${unlinkedCount} unlinked — check /admin/data-quality`
+      );
+    } else {
+      flash(`${valid.length} session${valid.length !== 1 ? "s" : ""} upserted · all linked to teachers`);
+    }
     setUploading(false);
     setPage(0);
     await fetchSessions();
@@ -219,22 +323,93 @@ export default function SessionsPage() {
     }
   }
 
+  // ── Derived option lists — unique sorted values from live data ────────
+  const teachers = useMemo(() => {
+    const names = new Set<string>();
+    sessions.forEach((s) => {
+      if (s.teacherUserName) names.add(s.teacherUserName);
+      if (s.tutorName) names.add(s.tutorName);
+    });
+    return Array.from(names).sort((a, b) => a.localeCompare(b));
+  }, [sessions]);
+
+  const students = useMemo(() => {
+    const names = new Set<string>();
+    sessions.forEach((s) => {
+      if (s.studentUserName) names.add(s.studentUserName);
+      if (s.expectedStudent1) names.add(s.expectedStudent1);
+      if (s.expectedStudent2) names.add(s.expectedStudent2);
+    });
+    return Array.from(names).sort((a, b) => a.localeCompare(b));
+  }, [sessions]);
+
+  const subjects     = useMemo(() => uniqSort(sessions.map((s) => s.subject)),    [sessions]);
+  const grades       = useMemo(() => uniqSort(sessions.map((s) => s.grade)),      [sessions]);
+  const boards       = useMemo(() => uniqSort(sessions.map((s) => s.board)),      [sessions]);
+  const curricula    = useMemo(() => uniqSort(sessions.map((s) => s.curriculum)), [sessions]);
+  const classStatuses = useMemo(() => uniqSort(sessions.map((s) => s.classStatus)), [sessions]);
+
   const filtered = useMemo(() => {
-    const q = search.toLowerCase();
+    const q    = search.toLowerCase().trim();
+    const eid  = fEnrollId.toLowerCase().trim();
+    const from = dateFrom ? new Date(dateFrom + "T00:00:00").getTime() : null;
+    const to   = dateTo   ? new Date(dateTo   + "T23:59:59").getTime() : null;
+
     return sessions.filter((s) => {
-      if (fStatus !== "all" && s.processingStatus !== fStatus) return false;
-      if (
-        q &&
-        !s.tutorName.toLowerCase().includes(q) &&
-        !s.expectedStudent1.toLowerCase().includes(q) &&
-        !s.subject.toLowerCase().includes(q) &&
-        !s.sessionId.toLowerCase().includes(q)
-      ) {
-        return false;
+      if (fProcStatus  && s.processingStatus !== fProcStatus)  return false;
+      if (fClassStatus && s.classStatus      !== fClassStatus) return false;
+      if (fSubject     && s.subject          !== fSubject)     return false;
+      if (fGrade       && s.grade            !== fGrade)       return false;
+      if (fBoard       && s.board            !== fBoard)       return false;
+      if (fCurriculum  && s.curriculum       !== fCurriculum)  return false;
+
+      if (fTeacher) {
+        if (s.teacherUserName !== fTeacher && s.tutorName !== fTeacher) return false;
       }
+
+      if (fStudent) {
+        if (
+          s.studentUserName !== fStudent &&
+          s.expectedStudent1 !== fStudent &&
+          s.expectedStudent2 !== fStudent
+        ) return false;
+      }
+
+      if (eid && !(s.enrollmentId ?? "").toLowerCase().includes(eid)) return false;
+
+      if (fAttended === "yes" && !(s.attendedStudent1 === true || s.attendedStudent2 === true)) return false;
+      if (fAttended === "no"  && !(s.attendedStudent1 === false && (s.attendedStudent2 === false || s.attendedStudent2 === null))) return false;
+
+      if (fRecording === "yes" && !s.recordingLink) return false;
+      if (fRecording === "no"  &&  s.recordingLink) return false;
+
+      if (fTranscript === "yes" && !s.transcript) return false;
+      if (fTranscript === "no"  &&  s.transcript) return false;
+
+      if (from !== null || to !== null) {
+        if (!s.sessionDate) return false;
+        const t = new Date(s.sessionDate + "T00:00:00").getTime();
+        if (from !== null && t < from) return false;
+        if (to   !== null && t > to)   return false;
+      }
+
+      if (q) {
+        const hay = [
+          s.tutorName, s.teacherUserName,
+          s.expectedStudent1, s.expectedStudent2, s.studentUserName,
+          s.subject, s.sessionId, s.enrollmentId, s.enrollmentName,
+        ].filter(Boolean).join(" ").toLowerCase();
+        if (!hay.includes(q)) return false;
+      }
+
       return true;
     });
-  }, [sessions, search, fStatus]);
+  }, [
+    sessions, search,
+    fProcStatus, fClassStatus, fTeacher, fStudent,
+    fSubject, fGrade, fBoard, fCurriculum, fEnrollId,
+    fAttended, fRecording, fTranscript, dateFrom, dateTo,
+  ]);
 
   const pendingWithRecording = useMemo(
     () =>
@@ -254,6 +429,30 @@ export default function SessionsPage() {
     [sessions]
   );
   const canRetryAll = user?.role === "analyst" || user?.role === "manager";
+
+  const hasFilters =
+    !!search || !!fProcStatus || !!fClassStatus ||
+    !!fTeacher || !!fStudent || !!fSubject || !!fGrade || !!fBoard || !!fCurriculum ||
+    !!fEnrollId || !!fAttended || !!fRecording || !!fTranscript ||
+    !!dateFrom || !!dateTo;
+
+  const clearFilters = () => {
+    setSearch(""); setFProcStatus(""); setFClassStatus("");
+    setFTeacher(""); setFStudent(""); setFSubject("");
+    setFGrade(""); setFBoard(""); setFCurriculum("");
+    setFEnrollId(""); setFAttended(""); setFRecording(""); setFTranscript("");
+    setDateFrom(""); setDateTo("");
+    setPage(0);
+  };
+
+  // Reset pagination whenever a filter changes — prevents empty pages after narrow filters.
+  useEffect(() => { setPage(0); }, [
+    search, fProcStatus, fClassStatus, fTeacher, fStudent,
+    fSubject, fGrade, fBoard, fCurriculum, fEnrollId,
+    fAttended, fRecording, fTranscript, dateFrom, dateTo,
+  ]);
+
+  const SS_BTN = "apple-input";
 
   return (
     <>
@@ -319,32 +518,260 @@ export default function SessionsPage() {
 
       <section style={{ background: "#fff", padding: "40px 24px 80px" }}>
         <div style={{ maxWidth: 1100, margin: "0 auto" }}>
-          {/* Filters */}
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 12, marginBottom: 24, alignItems: "center" }}>
+
+          {/* ── toolbar ─────────────────────────────────────────────────── */}
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 12, marginBottom: showFilters ? 12 : 24, alignItems: "center" }}>
+            <button
+              type="button"
+              onClick={() => setShowFilters((v) => !v)}
+              aria-expanded={showFilters}
+              aria-controls="sessions-filter-panel"
+              style={{
+                display: "inline-flex", alignItems: "center", gap: 6,
+                padding: "8px 14px",
+                background: showFilters ? BLUE : "transparent",
+                color: showFilters ? "#fff" : BLUE,
+                border: `1px solid ${BLUE}`,
+                borderRadius: 10, fontSize: 14, fontWeight: 500,
+                cursor: "pointer", transition: "background 0.15s, color 0.15s", flexShrink: 0,
+              }}
+            >
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <line x1="4" y1="6" x2="20" y2="6" />
+                <line x1="4" y1="12" x2="20" y2="12" />
+                <line x1="4" y1="18" x2="20" y2="18" />
+                <circle cx="9"  cy="6"  r="2.5" fill="currentColor" stroke="none" />
+                <circle cx="15" cy="12" r="2.5" fill="currentColor" stroke="none" />
+                <circle cx="9"  cy="18" r="2.5" fill="currentColor" stroke="none" />
+              </svg>
+              Filters
+              {hasFilters && (
+                <span style={{
+                  display: "inline-flex", alignItems: "center", justifyContent: "center",
+                  width: 16, height: 16, borderRadius: "50%",
+                  background: showFilters ? "rgba(255,255,255,0.35)" : BLUE,
+                  color: "#fff", fontSize: 10, fontWeight: 700,
+                }}>•</span>
+              )}
+            </button>
+
             <input
               className="apple-input"
               placeholder="Search tutor, student, subject, ID..."
               value={search}
-              onChange={(e) => { setSearch(e.target.value); setPage(0); }}
+              onChange={(e) => setSearch(e.target.value)}
               style={{ maxWidth: 320, fontSize: 14 }}
             />
-            <select
-              className="apple-select"
-              value={fStatus}
-              onChange={(e) => { setFStatus(e.target.value as typeof fStatus); setPage(0); }}
-              style={{ fontSize: 14 }}
-            >
-              <option value="all">All statuses</option>
-              <option value="pending">Pending</option>
-              <option value="processing">Processing</option>
-              <option value="scored">Scored</option>
-              <option value="approved">Approved</option>
-              <option value="failed">Failed</option>
-            </select>
+
             <span style={{ color: MUTED, fontSize: 13, marginLeft: "auto" }}>
               {filtered.length} session{filtered.length !== 1 ? "s" : ""}
             </span>
           </div>
+
+          {/* ── collapsible filter panel ───────────────────────────────── */}
+          {showFilters && (
+            <div
+              id="sessions-filter-panel"
+              className="animate-fade-up"
+              style={{
+                marginBottom: 24, padding: 16, background: LIGHT_GRAY, borderRadius: 14,
+                display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))",
+                gap: 12, alignItems: "end",
+              }}
+            >
+              <div style={FIELD}>
+                <label style={LABEL}>Processing status</label>
+                <SearchableSelect
+                  options={PROCESSING_STATUS_OPTS}
+                  value={fProcStatus}
+                  onChange={(v) => setFProcStatus(v as "" | SessionProcessingStatus)}
+                  placeholder="All statuses"
+                  clearLabel="All statuses"
+                  buttonClassName={SS_BTN}
+                  width="100%"
+                />
+              </div>
+
+              <div style={FIELD}>
+                <label style={LABEL}>Class status</label>
+                <SearchableSelect
+                  options={toOpts(classStatuses)}
+                  value={fClassStatus}
+                  onChange={setFClassStatus}
+                  placeholder="All class statuses"
+                  clearLabel="All class statuses"
+                  buttonClassName={SS_BTN}
+                  width="100%"
+                />
+              </div>
+
+              <div style={FIELD}>
+                <label style={LABEL}>Teacher</label>
+                <SearchableSelect
+                  options={toOpts(teachers)}
+                  value={fTeacher}
+                  onChange={setFTeacher}
+                  placeholder="All teachers"
+                  clearLabel="All teachers"
+                  buttonClassName={SS_BTN}
+                  width="100%"
+                />
+              </div>
+
+              <div style={FIELD}>
+                <label style={LABEL}>Student</label>
+                <SearchableSelect
+                  options={toOpts(students)}
+                  value={fStudent}
+                  onChange={setFStudent}
+                  placeholder="All students"
+                  clearLabel="All students"
+                  buttonClassName={SS_BTN}
+                  width="100%"
+                />
+              </div>
+
+              <div style={FIELD}>
+                <label style={LABEL}>Subject</label>
+                <SearchableSelect
+                  options={toOpts(subjects)}
+                  value={fSubject}
+                  onChange={setFSubject}
+                  placeholder="All subjects"
+                  clearLabel="All subjects"
+                  buttonClassName={SS_BTN}
+                  width="100%"
+                />
+              </div>
+
+              <div style={FIELD}>
+                <label style={LABEL}>Grade</label>
+                <SearchableSelect
+                  options={toOpts(grades)}
+                  value={fGrade}
+                  onChange={setFGrade}
+                  placeholder="All grades"
+                  clearLabel="All grades"
+                  buttonClassName={SS_BTN}
+                  width="100%"
+                />
+              </div>
+
+              <div style={FIELD}>
+                <label style={LABEL}>Board</label>
+                <SearchableSelect
+                  options={toOpts(boards)}
+                  value={fBoard}
+                  onChange={setFBoard}
+                  placeholder="All boards"
+                  clearLabel="All boards"
+                  buttonClassName={SS_BTN}
+                  width="100%"
+                />
+              </div>
+
+              <div style={FIELD}>
+                <label style={LABEL}>Curriculum</label>
+                <SearchableSelect
+                  options={toOpts(curricula)}
+                  value={fCurriculum}
+                  onChange={setFCurriculum}
+                  placeholder="All curricula"
+                  clearLabel="All curricula"
+                  buttonClassName={SS_BTN}
+                  width="100%"
+                />
+              </div>
+
+              <div style={FIELD}>
+                <label style={LABEL}>Enrollment ID</label>
+                <input
+                  className="apple-input"
+                  placeholder="Search enrollment_id"
+                  value={fEnrollId}
+                  onChange={(e) => setFEnrollId(e.target.value)}
+                  style={{ fontSize: 13 }}
+                />
+              </div>
+
+              <div style={FIELD}>
+                <label style={LABEL}>Attended</label>
+                <SearchableSelect
+                  options={YESNO}
+                  value={fAttended}
+                  onChange={setFAttended}
+                  placeholder="Any"
+                  clearLabel="Any"
+                  buttonClassName={SS_BTN}
+                  width="100%"
+                />
+              </div>
+
+              <div style={FIELD}>
+                <label style={LABEL}>Has recording</label>
+                <SearchableSelect
+                  options={YESNO}
+                  value={fRecording}
+                  onChange={setFRecording}
+                  placeholder="Any"
+                  clearLabel="Any"
+                  buttonClassName={SS_BTN}
+                  width="100%"
+                />
+              </div>
+
+              <div style={FIELD}>
+                <label style={LABEL}>Has transcript</label>
+                <SearchableSelect
+                  options={YESNO}
+                  value={fTranscript}
+                  onChange={setFTranscript}
+                  placeholder="Any"
+                  clearLabel="Any"
+                  buttonClassName={SS_BTN}
+                  width="100%"
+                />
+              </div>
+
+              <div style={FIELD}>
+                <label style={LABEL}>Date From</label>
+                <input
+                  type="date"
+                  className="apple-input"
+                  value={dateFrom}
+                  onChange={(e) => setDateFrom(e.target.value)}
+                  style={{ fontSize: 13 }}
+                />
+              </div>
+
+              <div style={FIELD}>
+                <label style={LABEL}>Date To</label>
+                <input
+                  type="date"
+                  className="apple-input"
+                  value={dateTo}
+                  onChange={(e) => setDateTo(e.target.value)}
+                  style={{ fontSize: 13 }}
+                />
+              </div>
+
+              {hasFilters && (
+                <div style={{ display: "flex", alignItems: "flex-end" }}>
+                  <button
+                    type="button"
+                    onClick={clearFilters}
+                    style={{
+                      background: "transparent", color: BLUE, border: `1px solid ${BLUE}`,
+                      padding: "10px 16px", borderRadius: 10, fontSize: 13, fontWeight: 500,
+                      cursor: "pointer", whiteSpace: "nowrap", width: "100%",
+                    }}
+                  >
+                    Clear filters
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Table */}
           {loading ? (

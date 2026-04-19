@@ -18,12 +18,13 @@ import {
   DemoDraft,
   DemoDraftStatus,
   ApprovedSession,
+  TeacherSession,
 } from "./types";
 import { SEED_ACTIVITY } from "./data";
 import { inDateRange, ageDays } from "./utils";
 import { supabase } from "./supabase";
 import { dbRowToDemo, demoToInsertRow, pourToDbRows, type DemoRow } from "./transforms";
-import { dbRowToApprovedSession } from "./review-transforms";
+import { dbRowToApprovedSession, dbRowToTeacherSession } from "./review-transforms";
 import { createSupabaseSync } from "./supabase-sync";
 
 export interface UserProfile {
@@ -84,6 +85,7 @@ interface StoreContextType {
   rejectDraft: (draftId: string) => Promise<void>;
   processingDemoIds: Set<number>;
   approvedSessions: ApprovedSession[];
+  teacherSessions: TeacherSession[];
   sessionTeachers: { teacherUserName: string; teacherUserId: string | null }[];
   stats: {
     total: number;
@@ -113,6 +115,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const [drafts, setDrafts] = useState<DemoDraft[]>([]);
   const [processingDemoIds, setProcessingDemoIds] = useState<Set<number>>(new Set());
   const [approvedSessions, setApprovedSessions] = useState<ApprovedSession[]>([]);
+  const [teacherSessions, setTeacherSessions] = useState<TeacherSession[]>([]);
   const [sessionTeachers, setSessionTeachers] = useState<{ teacherUserName: string; teacherUserId: string | null }[]>([]);
 
   const processedRealtimeIds = useRef<Set<number>>(new Set());
@@ -223,6 +226,31 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     setApprovedSessions(mapped);
   }, []);
 
+  // Every session + optional draft — powers the /teachers Product log so
+  // pending / scored / approved rows all surface. Matches by teacher_user_id
+  // downstream (stable FK), not by teacher_user_name (lossy string).
+  const fetchTeacherSessions = useCallback(async (role: UserProfile["role"] | null) => {
+    if (role !== "analyst" && role !== "manager") {
+      setTeacherSessions([]);
+      return;
+    }
+    const { data, error } = await supabase
+      .from("sessions")
+      .select(
+        "*, session_drafts ( draft_data, status, reviewed_at )"
+      )
+      .order("session_date", { ascending: false })
+      .limit(1000);
+    if (error) {
+      setTeacherSessions([]);
+      return;
+    }
+    const mapped = (data ?? []).map((r) =>
+      dbRowToTeacherSession(r as Parameters<typeof dbRowToTeacherSession>[0])
+    );
+    setTeacherSessions(mapped);
+  }, []);
+
   // Distinct session teachers (all statuses) — powers the /teachers card grid so
   // every tutor with any session gets a card, not only those with approved sessions.
   const fetchSessionTeachers = useCallback(async (role: UserProfile["role"] | null) => {
@@ -270,15 +298,17 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     if (profileRes.error || !profileRes.data) {
       setUser(null);
       fetchApprovedSessions(null);
+      fetchTeacherSessions(null);
       fetchSessionTeachers(null);
     } else {
       const profile = profileRes.data as UserProfile;
       setUser(profile);
       fetchApprovedSessions(profile.role);
+      fetchTeacherSessions(profile.role);
       fetchSessionTeachers(profile.role);
     }
     setSalesAgents((agentsRes.data as UserProfile[] | null) ?? []);
-  }, [fetchApprovedSessions, fetchSessionTeachers]);
+  }, [fetchApprovedSessions, fetchTeacherSessions, fetchSessionTeachers]);
 
   useEffect(() => {
     const { data } = supabase.auth.onAuthStateChange((event) => {
@@ -298,6 +328,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         setDrafts([]);
         setProcessingDemoIds(new Set());
         setApprovedSessions([]);
+        setTeacherSessions([]);
         setSessionTeachers([]);
         setLoading(false);
       }
@@ -469,6 +500,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         { event: "*", schema: "public", table: "sessions" },
         () => {
           fetchApprovedSessions(user.role);
+          fetchTeacherSessions(user.role);
           fetchSessionTeachers(user.role);
         }
       )
@@ -477,13 +509,14 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         { event: "*", schema: "public", table: "session_drafts" },
         () => {
           fetchApprovedSessions(user.role);
+          fetchTeacherSessions(user.role);
         }
       )
       .subscribe();
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [user?.role, fetchApprovedSessions, fetchSessionTeachers]);
+  }, [user?.role, fetchApprovedSessions, fetchTeacherSessions, fetchSessionTeachers]);
 
   // ─── Realtime: task_queue (keep processingDemoIds in sync) ──────
   useEffect(() => {
@@ -810,6 +843,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         rejectDraft,
         processingDemoIds,
         approvedSessions,
+        teacherSessions,
         sessionTeachers,
         stats,
       }}

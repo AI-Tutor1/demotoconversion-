@@ -260,3 +260,20 @@ class AutoRetryResponse(BaseModel):
     skipped: int = 0
     disabled: int = 0       # 1 if AUTO_RETRY_ENABLED=false, else 0
     already_running: int = 0  # 1 if a previous tick was still in flight
+
+
+class AuditLinkageResponse(BaseModel):
+    """Response from POST /api/v1/sessions/audit-linkage.
+
+    Summary of open data-quality issues after one audit tick. Each field
+    is the number of currently-open rows for that invariant after the
+    probe ran — zero is the healthy state.
+    """
+
+    null_teacher_linkage: int = 0
+    orphan_enrollment: int = 0
+    unrostered_teacher: int = 0
+    stuck_pending_review: int = 0
+    approved_not_surfaced: int = 0
+    disabled: int = 0       # 1 if AUDIT_ENABLED=false
+    already_running: int = 0  # 1 if a previous tick was still in flight

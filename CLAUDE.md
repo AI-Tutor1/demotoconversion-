@@ -138,7 +138,7 @@ UNDERSTAND → LOCATE → PLAN → IMPLEMENT → VERIFY → REPORT
 │   ├── csv-upload.tsx            # Reusable CSV file upload button
 │   ├── session-status-badge.tsx  # Processing status badge (pending/processing/scored/approved/failed)
 │   ├── session-draft-review.tsx  # Session QA scorecard review (8-question, approve/reject)
-│   ├── teacher-product-log.tsx   # Approved sessions list for a teacher (shared with future /students/[id])
+│   ├── teacher-product-log.tsx   # Approved sessions list for a teacher/student (accepts optional filterFn to narrow via drill filters; shared with future /students/[id])
 │   └── (backend: app/scheduler.py — AsyncIOScheduler for auto-retry of failed sessions)
 ├── lib/
 │   ├── types.ts                  # Demo type, design tokens, lookup arrays
@@ -180,7 +180,7 @@ UNDERSTAND → LOCATE → PLAN → IMPLEMENT → VERIFY → REPORT
 | `lib/csv-parser.ts` | CSV parse + column mapping | When touching CSV upload flow |
 | `lib/review-transforms.ts` | Enrollment/session DB transforms | When changing enrollment/session schema |
 | `components/session-draft-review.tsx` | Session scorecard review | When modifying session approval flow |
-| `components/teacher-product-log.tsx` | Approved-sessions list (per teacher or student) | When changing /teachers Product log or building /students/[id] |
+| `components/teacher-product-log.tsx` | Approved-sessions list (per teacher or student). Accepts optional `filterFn: (s: TeacherSession) => boolean` prop for narrowing sessions **after** the stable-FK teacher/student match. | When changing /teachers Product log, wiring drill-level filters into the Product log tab, or building /students/[id] |
 | `backend/app/scheduler.py` | APScheduler job that auto-retries failed sessions every 15 min | When tuning retry behavior, adding failure classifications, or debugging stuck sessions |
 | `app/globals.css` | All CSS classes | When adding new CSS |
 | `supabase/migrations/` | Schema history | When changing DB shape |
@@ -483,9 +483,11 @@ done
 - Do NOT modify `lib/store.tsx` without listing every consumer first
 - Do NOT add a second accent color — Apple Blue is the only one
 - Do NOT add gradients or decorative shadows — the design is intentionally flat
-- Do NOT run `npm run build` while `npm run dev` is running — causes `.next` cache corruption (see MEMORY.md BUG-012). Stop dev first, build, then restart dev.
+- Do NOT run `npm run build` while `npm run dev` is running — causes `.next` cache corruption (see `memory/feedback_next_cache_corruption_recovery.md`). Stop dev first, build, then restart dev. If UI breaks right after a build, recovery = `pkill -f "next dev" && rm -rf .next && npm run dev`.
+- Do NOT write a filter predicate that calls `.toLowerCase()` / `.includes()` / `.trim()` on a DB-sourced string without `?? ""`. Most string columns in this repo are nullable in DB; a single null crashes the `useMemo` and React silently returns `[]` — "0 results" with no visible error. See `memory/feedback_filter_predicate_null_safety.md` and the /enrollments 2026-04-20 incident.
 - Do NOT create additional root-level directories for services — only `backend/` and `supabase/` exist alongside the Next.js app
 - Do NOT import from `backend/` in frontend code or vice versa — they communicate via HTTP only
+- Do NOT filter cross-entity lists (Product log, Teacher drill-down, /students/[id]) by `teacher_user_name` / `student_user_name` or any denormalised string. Always join by `teacher_user_id` / `student_user_id` — the stable FK. See `memory/feedback_join_by_stable_fk.md` for the 2026-04-19 incident that motivated this.
 
 ## When In Doubt
 
@@ -495,5 +497,6 @@ done
 - **Auth, RLS, environment variables** → MEMORY.md (Security section)
 - **Phase 3 AI agent prompts** → CONTEXT.md (AI Agent Prompts section)
 - **Setup or deploy** → README.md
+- **Adding a filter panel (dropdowns / ID searches / date ranges) to any list page** → `ui-qa-demo-to-conversion` skill, Section 9 "Filter UIs — the recipe that passes first-review". Canonical example: `app/enrollments/page.tsx`.
 - Run the Four Laws check after every file edit
-- Run `npm run build` before committing
+- Run `npm run build` before committing (but not while `npm run dev` is running)

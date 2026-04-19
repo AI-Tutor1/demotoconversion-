@@ -19,6 +19,7 @@ const NAV_ITEMS: { label: string; href: string; roles?: ("analyst" | "sales_agen
   { label: "Teachers",  href: "/teachers" },
   { label: "Enrollments", href: "/enrollments", roles: ["analyst", "manager"] },
   { label: "Sessions",    href: "/sessions",    roles: ["analyst", "manager"] },
+  { label: "Data quality", href: "/admin/data-quality", roles: ["manager"] },
 ];
 
 export default function Nav() {

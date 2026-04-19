@@ -425,6 +425,19 @@ export interface ApprovedSession extends Session {
   draftStatus: DemoDraftStatus;
 }
 
+// A Session + (optional) draft — superset of ApprovedSession. Powers the
+// /teachers Product log so every session surfaces, not only approved ones.
+// Scorecard fields are null until the analyst pipeline populates them.
+export interface TeacherSession extends Session {
+  scorecardTotal: number | null;
+  scoreInterpretation: string | null;
+  pourIssues: { category: string; description: string }[];
+  overallSummary: string | null;
+  improvementSuggestions: string | null;
+  reviewedAt: string | null;
+  draftStatus: DemoDraftStatus | null;
+}
+
 export interface SessionDraft {
   id: string;
   session_id: number;

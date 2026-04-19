@@ -58,6 +58,9 @@ scheduler = AsyncIOScheduler(timezone="UTC")
 # start a second one before the first drains.
 _tick_lock = asyncio.Lock()
 
+# Second lock — the audit job is cheap but mustn't overlap either.
+_audit_lock = asyncio.Lock()
+
 Classification = Literal[
     "transient_rate_limit",
     "transient_generic",
@@ -297,8 +300,246 @@ async def auto_retry_failed_sessions() -> dict[str, int]:
         }
 
 
+def _run_audit_probes_sync() -> dict[str, int]:
+    """Open rows for each broken invariant, close rows that no longer match.
+
+    Runs entirely via Supabase service-role client. Returns a summary dict
+    keyed by issue_type. Idempotent thanks to the unique partial index on
+    (issue_type, session_id) WHERE resolved_at IS NULL — rerunning never
+    creates duplicate open rows.
+
+    Invariants checked:
+      * null_teacher_linkage — teacher_user_id or teacher_user_name NULL
+      * orphan_enrollment    — enrollment_id not found in enrollments
+      * unrostered_teacher   — teacher_user_id not in teacher_roster seed
+      * stuck_pending_review — scored for >N days without analyst review
+      * approved_not_surfaced — the /teachers Product log invariant:
+          every processing_status='approved' row MUST have a session_drafts
+          row with status IN ('approved','partially_edited'). Otherwise the
+          UI hides it — exactly the class of bug reported on 2026-04-19.
+    """
+    sb = get_supabase()
+    opened = {
+        "null_teacher_linkage": 0,
+        "orphan_enrollment": 0,
+        "unrostered_teacher": 0,
+        "stuck_pending_review": 0,
+        "approved_not_surfaced": 0,
+    }
+
+    def _open_issues(issue_type: str, offenders: list[tuple[int, dict]]) -> None:
+        """Insert one open row per offender, ON CONFLICT DO NOTHING via index."""
+        if not offenders:
+            return
+        rows = [
+            {"issue_type": issue_type, "session_id": sid, "details": details}
+            for sid, details in offenders
+        ]
+        try:
+            sb.table("data_quality_issues").upsert(
+                rows,
+                on_conflict="issue_type,session_id",
+                ignore_duplicates=True,
+            ).execute()
+        except Exception as exc:  # noqa: BLE001
+            log.warning("audit: failed to upsert %s issues: %s", issue_type, exc)
+
+    def _close_resolved(issue_type: str, still_open_session_ids: set[int]) -> None:
+        """Mark as resolved any open row whose underlying condition is gone."""
+        res = (
+            sb.table("data_quality_issues")
+            .select("id, session_id")
+            .eq("issue_type", issue_type)
+            .is_("resolved_at", "null")
+            .execute()
+        )
+        to_close = [
+            r["id"] for r in (res.data or [])
+            if int(r["session_id"]) not in still_open_session_ids
+        ]
+        if not to_close:
+            return
+        try:
+            sb.table("data_quality_issues").update(
+                {"resolved_at": datetime.now(timezone.utc).isoformat()}
+            ).in_("id", to_close).execute()
+        except Exception as exc:  # noqa: BLE001
+            log.warning("audit: failed to resolve %s issues: %s", issue_type, exc)
+
+    # ── Probe 1: null_teacher_linkage ────────────────────────────
+    res = (
+        sb.table("sessions")
+        .select("id, session_id, enrollment_id, teacher_user_id, teacher_user_name")
+        .or_("teacher_user_id.is.null,teacher_user_name.is.null")
+        .execute()
+    )
+    offenders: list[tuple[int, dict]] = []
+    for r in (res.data or []):
+        offenders.append((
+            int(r["id"]),
+            {
+                "session_id": r.get("session_id"),
+                "enrollment_id": r.get("enrollment_id"),
+                "teacher_user_id": r.get("teacher_user_id"),
+                "teacher_user_name": r.get("teacher_user_name"),
+            },
+        ))
+    _open_issues("null_teacher_linkage", offenders)
+    _close_resolved("null_teacher_linkage", {sid for sid, _ in offenders})
+    opened["null_teacher_linkage"] = len(offenders)
+
+    # ── Probe 2: orphan_enrollment ───────────────────────────────
+    # A session whose enrollment_id isn't in public.enrollments.
+    enr_res = sb.table("enrollments").select("enrollment_id").execute()
+    enr_ids = {r["enrollment_id"] for r in (enr_res.data or [])}
+    sess_res = sb.table("sessions").select("id, session_id, enrollment_id").execute()
+    offenders = []
+    for r in (sess_res.data or []):
+        if r.get("enrollment_id") and r["enrollment_id"] not in enr_ids:
+            offenders.append((
+                int(r["id"]),
+                {"session_id": r.get("session_id"), "enrollment_id": r.get("enrollment_id")},
+            ))
+    _open_issues("orphan_enrollment", offenders)
+    _close_resolved("orphan_enrollment", {sid for sid, _ in offenders})
+    opened["orphan_enrollment"] = len(offenders)
+
+    # ── Probe 3: unrostered_teacher ──────────────────────────────
+    roster_res = sb.table("teacher_roster").select("uid").execute()
+    roster_uids = {r["uid"] for r in (roster_res.data or [])}
+    sess_res2 = sb.table("sessions").select(
+        "id, session_id, teacher_user_id, teacher_user_name"
+    ).not_.is_("teacher_user_id", "null").execute()
+    offenders = []
+    for r in (sess_res2.data or []):
+        if r["teacher_user_id"] not in roster_uids:
+            offenders.append((
+                int(r["id"]),
+                {
+                    "session_id": r.get("session_id"),
+                    "teacher_user_id": r["teacher_user_id"],
+                    "teacher_user_name": r.get("teacher_user_name"),
+                    "note": "Tutor present in sessions but not in teacher_roster — add to lib/types.ts TEACHERS and seed teacher_roster in a new migration.",
+                },
+            ))
+    _open_issues("unrostered_teacher", offenders)
+    _close_resolved("unrostered_teacher", {sid for sid, _ in offenders})
+    opened["unrostered_teacher"] = len(offenders)
+
+    # ── Probe 4: stuck_pending_review ────────────────────────────
+    if settings.audit_stuck_review_days > 0:
+        cutoff = (
+            datetime.now(timezone.utc)
+            - timedelta(days=settings.audit_stuck_review_days)
+        ).isoformat()
+        stuck_res = (
+            sb.table("sessions")
+            .select("id, session_id, updated_at, teacher_user_name")
+            .eq("processing_status", "scored")
+            .lt("updated_at", cutoff)
+            .execute()
+        )
+        offenders = [
+            (
+                int(r["id"]),
+                {
+                    "session_id": r.get("session_id"),
+                    "teacher_user_name": r.get("teacher_user_name"),
+                    "stuck_since": r.get("updated_at"),
+                },
+            )
+            for r in (stuck_res.data or [])
+        ]
+        _open_issues("stuck_pending_review", offenders)
+        _close_resolved("stuck_pending_review", {sid for sid, _ in offenders})
+        opened["stuck_pending_review"] = len(offenders)
+
+    # ── Probe 5: approved_not_surfaced ───────────────────────────
+    # The critical invariant. Any session with processing_status='approved'
+    # must have a session_drafts row whose status is 'approved' or
+    # 'partially_edited'. Otherwise /teachers Product log hides it.
+    approved_res = (
+        sb.table("sessions")
+        .select("id, session_id, teacher_user_id, teacher_user_name")
+        .eq("processing_status", "approved")
+        .execute()
+    )
+    approved_sess = approved_res.data or []
+    offenders = []
+    if approved_sess:
+        drafts_res = (
+            sb.table("session_drafts")
+            .select("session_id, status")
+            .in_("session_id", [int(r["id"]) for r in approved_sess])
+            .execute()
+        )
+        good_ids = {
+            int(d["session_id"])
+            for d in (drafts_res.data or [])
+            if d.get("status") in ("approved", "partially_edited")
+        }
+        for r in approved_sess:
+            if int(r["id"]) not in good_ids:
+                offenders.append((
+                    int(r["id"]),
+                    {
+                        "session_id": r.get("session_id"),
+                        "teacher_user_id": r.get("teacher_user_id"),
+                        "teacher_user_name": r.get("teacher_user_name"),
+                        "note": "processing_status=approved but no matching approved/partially_edited draft — hidden from /teachers Product log.",
+                    },
+                ))
+    _open_issues("approved_not_surfaced", offenders)
+    _close_resolved("approved_not_surfaced", {sid for sid, _ in offenders})
+    opened["approved_not_surfaced"] = len(offenders)
+
+    return opened
+
+
+async def audit_session_linkage() -> dict[str, int]:
+    """Single audit tick. Callable from APScheduler OR an admin endpoint.
+
+    Returns a summary of open issue counts by type.
+    """
+    if not settings.audit_enabled:
+        log.info("audit: disabled via AUDIT_ENABLED=false")
+        return {
+            "disabled": 1,
+            "null_teacher_linkage": 0,
+            "orphan_enrollment": 0,
+            "unrostered_teacher": 0,
+            "stuck_pending_review": 0,
+            "approved_not_surfaced": 0,
+        }
+
+    if _audit_lock.locked():
+        log.info("audit: previous tick still running, skipping")
+        return {
+            "already_running": 1,
+            "null_teacher_linkage": 0,
+            "orphan_enrollment": 0,
+            "unrostered_teacher": 0,
+            "stuck_pending_review": 0,
+            "approved_not_surfaced": 0,
+        }
+
+    async with _audit_lock:
+        summary = await asyncio.to_thread(_run_audit_probes_sync)
+        total = sum(summary.values())
+        log.info(
+            "audit: tick complete — total_open=%s null_teacher=%s orphan_enr=%s unrostered=%s stuck=%s not_surfaced=%s",
+            total,
+            summary["null_teacher_linkage"],
+            summary["orphan_enrollment"],
+            summary["unrostered_teacher"],
+            summary["stuck_pending_review"],
+            summary["approved_not_surfaced"],
+        )
+        return summary
+
+
 def start_scheduler() -> None:
-    """Register the recurring job and start the scheduler.
+    """Register the recurring jobs and start the scheduler.
 
     Idempotent — if already running, does nothing.
     """
@@ -313,12 +554,27 @@ def start_scheduler() -> None:
         max_instances=1,
         coalesce=True,
     )
+    scheduler.add_job(
+        audit_session_linkage,
+        trigger="interval",
+        hours=settings.audit_interval_hours,
+        id="audit_session_linkage",
+        replace_existing=True,
+        max_instances=1,
+        coalesce=True,
+    )
     scheduler.start()
     log.info(
         "auto_retry: scheduler started, interval=%s min, enabled=%s, max_attempts=%s",
         settings.auto_retry_interval_minutes,
         settings.auto_retry_enabled,
         settings.auto_retry_max_attempts,
+    )
+    log.info(
+        "audit: job registered, interval=%sh, enabled=%s, stuck_review_days=%s",
+        settings.audit_interval_hours,
+        settings.audit_enabled,
+        settings.audit_stuck_review_days,
     )
 
 

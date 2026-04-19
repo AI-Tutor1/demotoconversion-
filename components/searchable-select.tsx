@@ -78,9 +78,13 @@ export function SearchableSelect({
     return () => document.removeEventListener("keydown", handler);
   }, [open]);
 
-  // Focus the input when the dropdown opens so the user can start typing immediately.
+  // Focus the search input when the dropdown opens.
+  // requestAnimationFrame defers past the click-event focus-restoration so the
+  // browser doesn't hand focus back to the trigger button after our call.
   useEffect(() => {
-    if (open) inputRef.current?.focus();
+    if (!open) return;
+    const raf = requestAnimationFrame(() => { inputRef.current?.focus(); });
+    return () => cancelAnimationFrame(raf);
   }, [open]);
 
   const filtered = useMemo(() => {
@@ -110,6 +114,18 @@ export function SearchableSelect({
       <button
         type="button"
         onClick={() => setOpen((p) => !p)}
+        onKeyDown={(e) => {
+          // Backspace on the trigger clears the current selection.
+          if (e.key === "Backspace") {
+            if (value) { onChange(""); e.preventDefault(); }
+            return;
+          }
+          // Any printable character opens the dropdown pre-filled with that char.
+          if (!open && e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
+            setQuery(e.key);
+            setOpen(true);
+          }
+        }}
         className={
           buttonClassName ?? (isDark ? "filter-select-dark" : "filter-select-light")
         }
