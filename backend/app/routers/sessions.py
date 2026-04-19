@@ -24,7 +24,12 @@ from openai import OpenAIError
 
 from agents import base, demo_analyst, ingest
 from app.auth import AuthUser, require_auth
-from app.models import SessionAnalysisResponse, SessionProcessRecordingResponse
+from app.models import (
+    AutoRetryResponse,
+    SessionAnalysisResponse,
+    SessionProcessRecordingResponse,
+)
+from app.scheduler import auto_retry_failed_sessions
 from app.supabase_client import get_supabase
 
 router = APIRouter()
@@ -332,3 +337,30 @@ async def analyze_session(
         draft_data=result.draft,
         created_at=draft_row["created_at"],
     )
+
+
+@router.post(
+    "/auto-retry-failed",
+    response_model=AutoRetryResponse,
+    summary="Manually trigger one tick of the auto-retry scheduler",
+)
+async def auto_retry_failed_endpoint(
+    user: AuthUser = Depends(require_auth),
+) -> AutoRetryResponse:
+    """On-demand equivalent of the scheduled tick.
+
+    Same code path as the APScheduler job in app/scheduler.py — this just
+    lets an analyst or manager fire a scan immediately after a big CSV
+    upload instead of waiting up to AUTO_RETRY_INTERVAL_MINUTES.
+
+    Returns the summary of what the tick did. Retries are dispatched as
+    fire-and-forget asyncio tasks; actual session state updates arrive
+    via the existing sessions + session_drafts realtime subscriptions.
+    """
+    if user.role not in ("analyst", "manager"):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only analysts and managers may trigger auto-retry",
+        )
+    summary = await auto_retry_failed_sessions()
+    return AutoRetryResponse(**summary)

@@ -244,3 +244,19 @@ class SessionProcessRecordingResponse(BaseModel):
 
     session_id: int
     status: str  # "queued"
+
+
+class AutoRetryResponse(BaseModel):
+    """Response from POST /api/v1/sessions/auto-retry-failed.
+
+    Summary of one tick of the auto-retry job (same shape whether triggered
+    by the scheduler or by the on-demand endpoint). Retries are dispatched
+    as fire-and-forget asyncio tasks — this endpoint returns before any
+    individual session has finished processing.
+    """
+
+    considered: int = 0
+    retried: int = 0
+    skipped: int = 0
+    disabled: int = 0       # 1 if AUTO_RETRY_ENABLED=false, else 0
+    already_running: int = 0  # 1 if a previous tick was still in flight

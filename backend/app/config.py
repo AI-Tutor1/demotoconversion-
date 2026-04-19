@@ -17,6 +17,22 @@ class Settings(BaseSettings):
     # e.g. "https://demo-to-conversion.vercel.app,https://demo-to-conversion-git-main-*.vercel.app"
     frontend_origins: str = "http://localhost:3000"
 
+    # ─── Auto-retry of failed sessions ───────────────────────────
+    # Kill switch. When false, the scheduler still registers but the job
+    # no-ops on every tick — useful for incident response without a redeploy.
+    auto_retry_enabled: bool = True
+    # How often the scheduler wakes up to scan for retryable sessions.
+    auto_retry_interval_minutes: int = 15
+    # Maximum total failed task_queue rows per session before auto-retry
+    # gives up (counted across both ingest and demo_analyst). Manual analyst
+    # retries via /process-recording or /analyze also count toward this cap.
+    auto_retry_max_attempts: int = 3
+    # Cooldown after a Groq Whisper ASPH / rate-limit 429. Must be ≥ the
+    # Groq hourly window to avoid immediate re-429.
+    auto_retry_rate_limit_backoff_minutes: int = 60
+    # Cooldown after any other transient error (timeout, parse, network).
+    auto_retry_generic_backoff_minutes: int = 5
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",

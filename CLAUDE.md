@@ -138,7 +138,8 @@ UNDERSTAND → LOCATE → PLAN → IMPLEMENT → VERIFY → REPORT
 │   ├── csv-upload.tsx            # Reusable CSV file upload button
 │   ├── session-status-badge.tsx  # Processing status badge (pending/processing/scored/approved/failed)
 │   ├── session-draft-review.tsx  # Session QA scorecard review (8-question, approve/reject)
-│   └── teacher-product-log.tsx   # Approved sessions list for a teacher (shared with future /students/[id])
+│   ├── teacher-product-log.tsx   # Approved sessions list for a teacher (shared with future /students/[id])
+│   └── (backend: app/scheduler.py — AsyncIOScheduler for auto-retry of failed sessions)
 ├── lib/
 │   ├── types.ts                  # Demo type, design tokens, lookup arrays
 │   ├── utils.ts                  # Helper functions
@@ -180,6 +181,7 @@ UNDERSTAND → LOCATE → PLAN → IMPLEMENT → VERIFY → REPORT
 | `lib/review-transforms.ts` | Enrollment/session DB transforms | When changing enrollment/session schema |
 | `components/session-draft-review.tsx` | Session scorecard review | When modifying session approval flow |
 | `components/teacher-product-log.tsx` | Approved-sessions list (per teacher or student) | When changing /teachers Product log or building /students/[id] |
+| `backend/app/scheduler.py` | APScheduler job that auto-retries failed sessions every 15 min | When tuning retry behavior, adding failure classifications, or debugging stuck sessions |
 | `app/globals.css` | All CSS classes | When adding new CSS |
 | `supabase/migrations/` | Schema history | When changing DB shape |
 

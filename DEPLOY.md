@@ -48,6 +48,35 @@ curl -s https://product.talimatedu.com/login | grep -oE '_next/static/chunks/[a-
 # The chunk names must match the hashes printed in `npm run build`.
 ```
 
+### Environment variables — auto-retry scheduler (2026-04-19)
+
+Five optional keys tune the failed-session auto-retry in [backend/app/scheduler.py](backend/app/scheduler.py). All have sane defaults in `config.py`; only set them on the VPS when you need runtime tuning:
+
+```
+# .env on the VPS — append these to the existing Groq/Supabase block
+AUTO_RETRY_ENABLED=true                    # master kill switch
+AUTO_RETRY_INTERVAL_MINUTES=15             # tick frequency
+AUTO_RETRY_MAX_ATTEMPTS=3                  # total failed rows per session
+AUTO_RETRY_RATE_LIMIT_BACKOFF_MINUTES=60   # after ASPH/429 — keep ≥ 60
+AUTO_RETRY_GENERIC_BACKOFF_MINUTES=5       # after any other transient
+```
+
+**IMPORTANT on the first deploy of this feature:** `APScheduler` is a new Python dependency. The backend deploy block MUST include the pip-install step this time (not skippable):
+
+```bash
+cd /var/www/app/backend
+source <venv>/bin/activate && pip install -r requirements.txt && deactivate
+pm2 restart backend
+```
+
+Confirm the scheduler is live in `pm2 logs backend`:
+
+```
+auto_retry: scheduler started, interval=15 min, enabled=True, max_attempts=3
+```
+
+Subsequent deploys that don't change `requirements.txt` can skip pip-install, same as before.
+
 ### Deploy a change (backend)
 
 The backend Python venv path on this VPS isn't `.venv` — pm2 manages the backend through a bash wrapper. On 2026-04-19 the activate-venv step in a deploy failed with `-bash: .venv/bin/activate: No such file or directory`, but the pm2 restart still picked up the new code (no new deps to install), so it was a no-op annoyance, not a breakage. When backend has NEW Python deps, find the venv before pip-installing:

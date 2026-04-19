@@ -39,6 +39,31 @@ Both live in `supabase/migrations/20260416000102_upsert_rpcs.sql` and use `SECUR
 | `POST /api/v1/sessions/{id}/process-recording` | auth + role ∈ {analyst, manager} + session exists + recording_link valid | `task_queue` has running task OR `session_drafts` has `pending_review` row |
 | `POST /api/v1/sessions/{id}/analyze` | auth + role + session exists + transcript not empty | same |
 
+### Auto-retry of failed sessions (2026-04-19)
+
+A background scheduler in [backend/app/scheduler.py](backend/app/scheduler.py) retries failed sessions every `AUTO_RETRY_INTERVAL_MINUTES` (default 15). Same code path is exposed via `POST /api/v1/sessions/auto-retry-failed` (analyst + manager only) for on-demand triggers from the `/sessions` page "Retry N failed" button.
+
+**What counts as retryable.** The classifier in `classify_error()` string-matches `task_queue.error_message`:
+
+| Class | Triggers on | Backoff | Retries? |
+|---|---|---|---|
+| `transient_rate_limit` | `ASPH`, `rate_limit_exceeded`, `rate-limited` | 60 min | yes |
+| `transient_generic` | `timeout`, `httpx`, `Server disconnected`, `JSON parse`, `OpenAIError`, `Analyst failed`, `Auto-chained analysis failed`, `Unexpected` | 5 min | yes |
+| `permanent` | `invalid input`, `not a recognized google drive`, `transcript too short`, `no recording link` | — | never |
+| `unknown` | anything else | 5 min | yes; max-attempts cap catches runaways |
+
+**Per-session cap.** `AUTO_RETRY_MAX_ATTEMPTS` (default 3) counts failed `task_queue` rows across ingest + demo_analyst. Manual analyst retries count too. Past the cap → skipped permanently; analyst handles manually.
+
+**Dispatch.** If a transcript is on disk, the scheduler fires an analyst-only rerun (`_run_analyze_only`) — no Whisper cost. Otherwise it fires the full ingest chain (`_run_ingest_chain`). Both are `asyncio.create_task()` fire-and-forget; the scheduler returns its summary synchronously. Actual state movement flows through the existing realtime channel on `sessions` + `session_drafts`.
+
+**Kill switch.** `AUTO_RETRY_ENABLED=false` in `.env` makes every tick a no-op. Useful during a Groq incident.
+
+**Observability.** Every retry writes the same `task_queue` rows as manual triggers (no separate agent name). One INFO line per decision in `pm2 logs backend`. For a session's retry history: `SELECT agent_name, status, error_message, completed_at FROM task_queue WHERE session_id = ? ORDER BY created_at`.
+
+**Full architecture / gotchas:** `memory/project_auto_retry_system.md`.
+
+---
+
 ### Session ↔ profile linkage (2026-04-17)
 
 Every row in `sessions` carries four denormalized identity columns — `teacher_user_id`, `teacher_user_name`, `student_user_id`, `student_user_name` — populated from `enrollments` via the `trg_populate_session_user_fields` BEFORE INSERT/UPDATE trigger (migration `20260417000100_sessions_user_linkage.sql`). These exist so downstream profile pages can filter sessions cheaply without re-joining to `enrollments`.

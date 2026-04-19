@@ -126,6 +126,47 @@ export default function SessionsPage() {
     }
   }
 
+  // Fire the backend scheduler's auto-retry tick on demand. Backend picks up
+  // every failed session in the last 24hr that is (a) under the retry cap,
+  // (b) past its backoff window, (c) not permanent-classified. See
+  // backend/app/scheduler.py for the classifier.
+  async function handleRetryAllFailed() {
+    const backendUrl = process.env.NEXT_PUBLIC_AI_BACKEND_URL ?? "http://localhost:8000";
+    const { data: { session: authSession } } = await supabase.auth.getSession();
+    const token = authSession?.access_token;
+    if (!token) {
+      flash("Not authenticated");
+      return;
+    }
+    setProcessing(true);
+    try {
+      const res = await fetch(
+        `${backendUrl}/api/v1/sessions/auto-retry-failed`,
+        { method: "POST", headers: { Authorization: `Bearer ${token}` } }
+      );
+      if (!res.ok) {
+        flash(`Retry-all failed: HTTP ${res.status}`);
+        return;
+      }
+      const body = await res.json() as {
+        considered: number; retried: number; skipped: number;
+        disabled: number; already_running: number;
+      };
+      if (body.disabled) {
+        flash("Auto-retry is disabled via env var");
+      } else if (body.already_running) {
+        flash("Auto-retry already in progress — try again in a moment");
+      } else {
+        flash(`Auto-retry: ${body.retried} retried, ${body.skipped} skipped (${body.considered} considered)`);
+      }
+      await fetchSessions();
+    } catch (e) {
+      flash(`Retry-all failed: ${String(e).slice(0, 80)}`);
+    } finally {
+      setProcessing(false);
+    }
+  }
+
   async function handleCSVParsed(rows: Record<string, string>[]) {
     if (rows.length === 0) {
       flash("CSV is empty or invalid");
@@ -208,6 +249,12 @@ export default function SessionsPage() {
   );
   const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
 
+  const failedCount = useMemo(
+    () => sessions.filter((s) => s.processingStatus === "failed").length,
+    [sessions]
+  );
+  const canRetryAll = user?.role === "analyst" || user?.role === "manager";
+
   return (
     <>
       <section style={{ background: LIGHT_GRAY, paddingTop: 92, paddingBottom: 40 }}>
@@ -243,6 +290,27 @@ export default function SessionsPage() {
                 {processing
                   ? `Processing ${pendingWithRecording}...`
                   : `Process ${pendingWithRecording} pending`}
+              </button>
+            )}
+            {canRetryAll && failedCount > 0 && (
+              <button
+                type="button"
+                onClick={handleRetryAllFailed}
+                disabled={uploading || processing}
+                title="Fires one tick of the backend auto-retry. Permanent failures are skipped; rate-limited ones wait for their backoff window."
+                style={{
+                  background: "#fff",
+                  color: BLUE,
+                  border: `1px solid ${BLUE}`,
+                  padding: "8px 20px",
+                  borderRadius: 980,
+                  fontSize: 14,
+                  fontWeight: 500,
+                  cursor: uploading || processing ? "not-allowed" : "pointer",
+                  opacity: uploading || processing ? 0.5 : 1,
+                }}
+              >
+                Retry {failedCount} failed
               </button>
             )}
           </div>

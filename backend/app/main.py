@@ -1,13 +1,29 @@
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from .config import settings
 from .routers import demos, ingest, sessions
+from .scheduler import shutdown_scheduler, start_scheduler
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    # Start the auto-retry scheduler when uvicorn boots. Scheduler respects
+    # AUTO_RETRY_ENABLED internally, so the kill switch needs no main.py edit.
+    start_scheduler()
+    try:
+        yield
+    finally:
+        shutdown_scheduler()
+
 
 app = FastAPI(
     title="Demo to Conversion — AI Backend",
     description="Python backend running LangGraph AI agents for the Demo to Conversion platform.",
     version="0.1.0",
+    lifespan=lifespan,
 )
 
 # Allowed origins come from the FRONTEND_ORIGINS env var — comma-separated.
