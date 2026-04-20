@@ -10,6 +10,7 @@ import {
   dbRowToTeacherAvailability, dbRowToTeacherRate, teacherFullName,
 } from "@/lib/teacher-transforms";
 import { supabase } from "@/lib/supabase";
+import { SearchableSelect } from "@/components/searchable-select";
 import HrCandidateForm from "@/components/hr-candidate-form";
 import HrInterviewDrawer from "@/components/hr-interview-drawer";
 
@@ -51,21 +52,19 @@ function rateSummary(rates: TeacherRate[]): string {
   return min === max ? `${currency} ${min}` : `${currency} ${min}–${max}`;
 }
 
-const FILTER_LABEL: React.CSSProperties = {
-  fontSize: 11, fontWeight: 600, color: MUTED,
-  textTransform: "uppercase", letterSpacing: "0.04em",
-  marginBottom: 4, display: "block",
-};
-
 const FILTER_ITEMS = [
-  { key: "tier",       label: "Tier",       placeholder: "All tiers",     options: TEACHER_TIERS },
-  { key: "subject",    label: "Subject",    placeholder: "All subjects",  options: SUBJECTS },
-  { key: "curriculum", label: "Curriculum", placeholder: "All curricula", options: CURRICULA },
-  { key: "level",      label: "Level",      placeholder: "All levels",    options: LEVELS },
-  { key: "grade",      label: "Grade",      placeholder: "All grades",    options: GRADES },
+  { key: "tier",       placeholder: "Tier",       clearLabel: "All tiers",     options: TEACHER_TIERS },
+  { key: "subject",    placeholder: "Subject",    clearLabel: "All subjects",  options: SUBJECTS },
+  { key: "curriculum", placeholder: "Curriculum", clearLabel: "All curricula", options: CURRICULA },
+  { key: "level",      placeholder: "Level",      clearLabel: "All levels",    options: LEVELS },
+  { key: "grade",      placeholder: "Grade",      clearLabel: "All grades",    options: GRADES },
 ] as const;
 
 type FilterKey = typeof FILTER_ITEMS[number]["key"];
+
+function toOpts(arr: readonly string[]) {
+  return arr.map((v) => ({ value: v, label: v }));
+}
 
 export default function HrPage() {
   const { teacherProfiles, user } = useStore();
@@ -73,7 +72,6 @@ export default function HrPage() {
   const [search, setSearch] = useState("");
   const [showForm, setShowForm] = useState(false);
   const [openProfile, setOpenProfile] = useState<TeacherProfile | null>(null);
-  const [showFilters, setShowFilters] = useState(false);
   const [filters, setFilters] = useState<Record<FilterKey, string>>({
     tier: "", subject: "", curriculum: "", level: "", grade: "",
   });
@@ -210,131 +208,93 @@ export default function HrPage() {
             </button>
           </div>
 
-          {/* Toolbar */}
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 12, marginBottom: showFilters ? 12 : 24, alignItems: "center" }}>
-            <button
-              type="button"
-              onClick={() => setShowFilters((v) => !v)}
-              aria-expanded={showFilters}
-              aria-controls="hr-filter-panel"
-              style={{
-                display: "inline-flex", alignItems: "center", gap: 6,
-                padding: "8px 14px",
-                background: showFilters ? BLUE : "transparent",
-                color: showFilters ? "#fff" : BLUE,
-                border: `1px solid ${BLUE}`,
-                borderRadius: 10, fontSize: 14, fontWeight: 500,
-                cursor: "pointer", transition: "background 0.15s, color 0.15s", flexShrink: 0,
-              }}
-            >
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                <line x1="4" y1="6" x2="20" y2="6" />
-                <line x1="4" y1="12" x2="20" y2="12" />
-                <line x1="4" y1="18" x2="20" y2="18" />
-                <circle cx="9"  cy="6"  r="2.5" fill="currentColor" stroke="none" />
-                <circle cx="15" cy="12" r="2.5" fill="currentColor" stroke="none" />
-                <circle cx="9"  cy="18" r="2.5" fill="currentColor" stroke="none" />
-              </svg>
-              Filters
-              {hasFilters && (
-                <span style={{
-                  display: "inline-flex", alignItems: "center", justifyContent: "center",
-                  width: 16, height: 16, borderRadius: "50%",
-                  background: showFilters ? "rgba(255,255,255,0.35)" : BLUE,
-                  color: "#fff", fontSize: 10, fontWeight: 700,
-                }}>•</span>
-              )}
-            </button>
-
+          {/* Search + count */}
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 12, marginBottom: 14, alignItems: "center" }}>
             <input
               className="apple-input"
               placeholder="Search by name, HR#, phone, email, tutor ID…"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              style={{ maxWidth: 340, fontSize: 14 }}
+              style={{ maxWidth: 340, fontSize: 14, flex: "1 1 260px" }}
             />
-
             <span style={{ color: MUTED, fontSize: 13, marginLeft: "auto" }}>
               {filtered.length} candidate{filtered.length !== 1 ? "s" : ""}
             </span>
           </div>
 
-          {/* Filter panel */}
-          {showFilters && (
-            <div
-              id="hr-filter-panel"
-              className="animate-fade-up"
-              style={{
-                marginBottom: 24, padding: "16px 20px",
-                background: LIGHT_GRAY, borderRadius: 14,
-              }}
-            >
+          {/* Inline pill filters */}
+          <div style={{
+            display: "flex", flexWrap: "wrap", gap: 8,
+            marginBottom: 20, alignItems: "center",
+          }}>
+            {FILTER_ITEMS.map(({ key, placeholder, clearLabel, options }) => {
+              const active = !!filters[key];
+              return (
+                <SearchableSelect
+                  key={key}
+                  options={toOpts(options)}
+                  value={filters[key]}
+                  onChange={(v) => setFilter(key, v)}
+                  placeholder={placeholder}
+                  clearLabel={clearLabel}
+                  variant="light"
+                  buttonClassName={active ? "pill pill-blue" : "pill pill-outline"}
+                />
+              );
+            })}
+            {hasFilters && (
+              <button
+                type="button"
+                onClick={clearFilters}
+                style={{
+                  border: "none", background: "transparent",
+                  color: MUTED, fontSize: 13, fontWeight: 500,
+                  padding: "6px 10px", cursor: "pointer",
+                  marginLeft: 4,
+                }}
+              >
+                ✕ Clear all
+              </button>
+            )}
+          </div>
+
+          {/* Table — header always visible; rows OR in-table empty message below */}
+          <div style={{ border: "1px solid #f0f0f0", borderRadius: 12, overflow: "hidden", overflowX: "auto" }}>
+            <div style={{ minWidth: 980 }}>
+              {/* Header */}
               <div style={{
-                display: "grid",
-                gridTemplateColumns: "repeat(5, 1fr)",
-                gap: "12px 16px",
+                display: "grid", gridTemplateColumns: GRID, gap: 8,
+                padding: "10px 16px", background: "#fafafa",
+                fontSize: 11, fontWeight: 600, color: MUTED,
+                textTransform: "uppercase", letterSpacing: "0.04em",
               }}>
-                {FILTER_ITEMS.map(({ key, label, placeholder, options }) => (
-                  <div key={key} style={{ display: "flex", flexDirection: "column" }}>
-                    <label style={FILTER_LABEL}>{label}</label>
-                    <select
-                      className="apple-select"
-                      value={filters[key]}
-                      onChange={(e) => setFilter(key, e.target.value)}
-                      style={{ width: "100%" }}
-                    >
-                      <option value="">{placeholder}</option>
-                      {options.map((o) => <option key={o} value={o}>{o}</option>)}
-                    </select>
-                  </div>
-                ))}
+                <div>Name</div>
+                <div>HR#</div>
+                <div>Subjects</div>
+                <div>Curricula</div>
+                <div>Rate / hr</div>
+                <div>Availability</div>
+                <div>Tier</div>
+                <div>Status</div>
+                <div>Tutor ID</div>
               </div>
-              {hasFilters && (
-                <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 12 }}>
-                  <button
-                    type="button"
-                    onClick={clearFilters}
-                    style={{
-                      background: "transparent", color: BLUE, border: `1px solid ${BLUE}`,
-                      padding: "7px 16px", borderRadius: 10, fontSize: 13, fontWeight: 500,
-                      cursor: "pointer",
-                    }}
-                  >
-                    Clear filters
-                  </button>
-                </div>
-              )}
-            </div>
-          )}
 
-          {/* Table */}
-          {filtered.length === 0 ? (
-            <div style={{ padding: 60, textAlign: "center", color: MUTED, background: LIGHT_GRAY, borderRadius: 12 }}>
-              {search.trim() ? "No candidates match your search." : `No ${tab}.`}
-            </div>
-          ) : (
-            <div style={{ border: "1px solid #f0f0f0", borderRadius: 12, overflow: "hidden", overflowX: "auto" }}>
-              <div style={{ minWidth: 980 }}>
-                {/* Header */}
+              {/* Rows OR empty state */}
+              {filtered.length === 0 ? (
                 <div style={{
-                  display: "grid", gridTemplateColumns: GRID, gap: 8,
-                  padding: "10px 16px", background: "#fafafa",
-                  fontSize: 11, fontWeight: 600, color: MUTED,
-                  textTransform: "uppercase", letterSpacing: "0.04em",
+                  padding: "48px 24px",
+                  textAlign: "center",
+                  color: MUTED,
+                  background: "#fff",
+                  borderTop: "1px solid #f5f5f7",
+                  fontSize: 14,
                 }}>
-                  <div>Name</div>
-                  <div>HR#</div>
-                  <div>Subjects</div>
-                  <div>Curricula</div>
-                  <div>Rate / hr</div>
-                  <div>Availability</div>
-                  <div>Tier</div>
-                  <div>Status</div>
-                  <div>Tutor ID</div>
+                  {search.trim() || hasFilters
+                    ? "No candidates match your filters."
+                    : `No ${tab}.`}
                 </div>
-
-                {/* Rows */}
-                {filtered.map((p) => {
+              ) : (
+                filtered.map((p) => {
                   const subjects  = [...new Set(p.teachingMatrix.map((m) => m.subject).filter(Boolean))];
                   const curricula = [...new Set(p.teachingMatrix.map((m) => m.curriculum).filter(Boolean))];
                   const rates     = ratesByProfileId[p.id] ?? [];
@@ -440,10 +400,10 @@ export default function HrPage() {
                       <div style={{ color: MUTED, fontSize: 12 }}>{p.tid ?? "—"}</div>
                     </button>
                   );
-                })}
-              </div>
+                })
+              )}
             </div>
-          )}
+          </div>
         </div>
       </section>
 
