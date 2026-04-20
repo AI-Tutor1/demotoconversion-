@@ -3,12 +3,16 @@ import { useMemo } from "react";
 import { useStore } from "@/lib/store";
 import { EmptyState } from "@/components/ui";
 import { AnalyticsScorecard } from "@/components/analytics-scorecard";
-import { POUR_CATS, MUTED, BLUE, LIGHT_GRAY, NEAR_BLACK, CARD_DARK } from "@/lib/types";
+import { ACCT_FINAL_CATEGORIES, POUR_CATS, MUTED, BLUE, LIGHT_GRAY, NEAR_BLACK, CARD_DARK } from "@/lib/types";
 import { ageDays, formatMonth } from "@/lib/utils";
-import { BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Area, AreaChart } from "recharts";
+import { BarChart, Bar, Cell, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Area, AreaChart } from "recharts";
 
 const ttStyle = { borderRadius: 10, border: "1px solid #e8e8ed", fontSize: 12 };
-const PIE_C = [BLUE, "#FF9F0A", MUTED];
+const ACCT_COLOR: Record<string, string> = {
+  Product:  "#FF9F0A",
+  Sales:    BLUE,
+  Consumer: "#30D158",
+};
 
 export default function AnalyticsPage() {
   const { rangedDemos: demos } = useStore();
@@ -29,11 +33,57 @@ export default function AnalyticsPage() {
     return POUR_CATS.map((c) => ({ name: c, count: m[c] })).filter((x) => x.count > 0).sort((a, b) => b.count - a.count);
   }, [demos]);
 
-  const acctData = useMemo(() => {
-    const m: Record<string, number> = { Sales: 0, Product: 0, Consumer: 0 };
-    demos.filter((d) => d.acctType).forEach((d) => { m[d.acctType]++; });
-    return Object.entries(m).map(([k, v]) => ({ name: k, count: v }));
-  }, [demos]);
+  // ─── Accountability (product-analyst finalisation) ───
+  const finalisedDemos = useMemo(
+    () => demos.filter((d) => !!d.accountabilityFinalAt),
+    [demos]
+  );
+  const awaitingDemos = useMemo(
+    () => demos.filter((d) => d.status === "Not Converted" && !d.accountabilityFinalAt),
+    [demos]
+  );
+
+  // Category frequency — each demo contributes 1 to each of its finalised
+  // categories. Totals can exceed demo count (intentional: multi-select).
+  const acctFrequency = useMemo(() => {
+    const m: Record<string, number> = { Product: 0, Sales: 0, Consumer: 0 };
+    finalisedDemos.forEach((d) => {
+      d.accountabilityFinal.forEach((c) => {
+        if (m[c] !== undefined) m[c]++;
+      });
+    });
+    return ACCT_FINAL_CATEGORIES.map((c) => ({
+      name: c.label,
+      value: c.value,
+      count: m[c.value] ?? 0,
+    }));
+  }, [finalisedDemos]);
+
+  // Combination buckets — each demo contributes to exactly ONE bucket, so
+  // these bars always sum to finalisedDemos.length (the correctness check).
+  const acctCombinations = useMemo(() => {
+    const key = (cats: string[]): string => {
+      const has = (c: string) => cats.includes(c);
+      const short = (c: string) => c[0]; // P | S | C
+      const ordered = ["Product", "Sales", "Consumer"].filter(has).map(short);
+      return ordered.join("+") || "—";
+    };
+    const m: Record<string, number> = {};
+    finalisedDemos.forEach((d) => {
+      const k = key(d.accountabilityFinal);
+      m[k] = (m[k] ?? 0) + 1;
+    });
+    const ORDER = ["P", "S", "C", "P+S", "P+C", "S+C", "P+S+C"];
+    return ORDER.filter((k) => (m[k] ?? 0) > 0).map((k) => ({
+      name: k,
+      count: m[k] ?? 0,
+    }));
+  }, [finalisedDemos]);
+
+  const acctAllocationTotal = useMemo(
+    () => acctFrequency.reduce((s, a) => s + a.count, 0),
+    [acctFrequency]
+  );
 
   const agentData = useMemo(() => {
     const m: Record<string, { name: string; handled: number; converted: number }> = {};
@@ -134,23 +184,91 @@ export default function AnalyticsPage() {
       {/* QA Scorecard analytics */}
       <AnalyticsScorecard demos={demos} />
 
-      {/* Accountability + Aging + Subject */}
+      {/* Accountability (product-analyst finalisation) */}
       <section style={{ background: LIGHT_GRAY, padding: "32px 24px" }}>
-        <div style={{ maxWidth: 1100, margin: "0 auto", display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 16 }}>
-          <div className="chart-card">
+        <div style={{ maxWidth: 1100, margin: "0 auto" }}>
+          <div style={{ marginBottom: 14 }}>
             <div className="section-label">Accountability</div>
-            <div style={{ fontSize: 21, fontWeight: 600, margin: "4px 0 12px" }}>Loss attribution</div>
-            {acctData.some((a) => a.count > 0) ? (
-              <>
-                <div style={{ display: "flex", justifyContent: "center" }}>
-                  <ResponsiveContainer width={150} height={150}>
-                    <PieChart><Pie data={acctData} cx="50%" cy="50%" innerRadius={40} outerRadius={65} paddingAngle={3} dataKey="count">{acctData.map((_, i) => <Cell key={i} fill={PIE_C[i]} />)}</Pie><Tooltip contentStyle={ttStyle} /></PieChart>
-                  </ResponsiveContainer>
-                </div>
-                <div style={{ display: "flex", justifyContent: "center", gap: 12, marginTop: 4 }}>{acctData.map((a, i) => <div key={a.name} style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 11, color: MUTED }}><span style={{ width: 7, height: 7, borderRadius: "50%", background: PIE_C[i] }} />{a.name} ({a.count})</div>)}</div>
-              </>
-            ) : <EmptyState text="No accountability data yet" />}
+            <div style={{ fontSize: 21, fontWeight: 600, margin: "4px 0 6px" }}>Loss attribution</div>
+            <div style={{ fontSize: 12, color: MUTED }}>
+              Finalised allocations by product analyst. A Not-Converted demo may carry multiple categories.
+            </div>
           </div>
+
+          {/* KPI row */}
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12, marginBottom: 16 }}>
+            <div className="chart-card" style={{ padding: "16px 20px" }}>
+              <div style={{ fontSize: 11, fontWeight: 600, color: MUTED, textTransform: "uppercase" }}>Finalised</div>
+              <div style={{ fontSize: 28, fontWeight: 600, color: NEAR_BLACK, marginTop: 4 }}>{finalisedDemos.length}</div>
+              <div style={{ fontSize: 11, color: MUTED, marginTop: 2 }}>
+                {acctAllocationTotal} allocation{acctAllocationTotal === 1 ? "" : "s"}
+              </div>
+            </div>
+            <div className="chart-card" style={{ padding: "16px 20px" }}>
+              <div style={{ fontSize: 11, fontWeight: 600, color: MUTED, textTransform: "uppercase" }}>Awaiting accountability</div>
+              <div style={{ fontSize: 28, fontWeight: 600, color: awaitingDemos.length > 0 ? "#FF9F0A" : NEAR_BLACK, marginTop: 4 }}>
+                {awaitingDemos.length}
+              </div>
+              <div style={{ fontSize: 11, color: MUTED, marginTop: 2 }}>Not Converted &middot; no finalisation yet</div>
+            </div>
+          </div>
+
+          {/* Frequency + combinations */}
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: 16 }}>
+            <div className="chart-card">
+              <div className="section-label">Category frequency</div>
+              <div style={{ fontSize: 15, fontWeight: 600, color: NEAR_BLACK, margin: "4px 0 10px" }}>
+                Demos attributed to each category
+              </div>
+              {finalisedDemos.length > 0 ? (
+                <ResponsiveContainer width="100%" height={160}>
+                  <BarChart data={acctFrequency} layout="vertical" barSize={16}>
+                    <XAxis type="number" tick={{ fontSize: 10, fill: MUTED }} axisLine={false} tickLine={false} allowDecimals={false} />
+                    <YAxis type="category" dataKey="name" tick={{ fontSize: 11, fill: NEAR_BLACK }} axisLine={false} tickLine={false} width={100} />
+                    <Tooltip contentStyle={ttStyle} />
+                    <Bar dataKey="count" radius={[0, 4, 4, 0]}>
+                      {acctFrequency.map((entry) => (
+                        <Cell key={entry.value} fill={ACCT_COLOR[entry.value] ?? BLUE} />
+                      ))}
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+              ) : (
+                <EmptyState text="No finalised accountability yet" />
+              )}
+              <div style={{ fontSize: 11, color: MUTED, marginTop: 8 }}>
+                {finalisedDemos.length} demo{finalisedDemos.length === 1 ? "" : "s"} &middot; {acctAllocationTotal} allocation{acctAllocationTotal === 1 ? "" : "s"}
+              </div>
+            </div>
+
+            <div className="chart-card">
+              <div className="section-label">Combinations</div>
+              <div style={{ fontSize: 15, fontWeight: 600, color: NEAR_BLACK, margin: "4px 0 10px" }}>
+                How often categories appear together
+              </div>
+              {acctCombinations.length > 0 ? (
+                <ResponsiveContainer width="100%" height={160}>
+                  <BarChart data={acctCombinations} barSize={24}>
+                    <XAxis dataKey="name" tick={{ fontSize: 11, fill: MUTED }} axisLine={false} tickLine={false} />
+                    <YAxis tick={{ fontSize: 10, fill: MUTED }} axisLine={false} tickLine={false} allowDecimals={false} />
+                    <Tooltip contentStyle={ttStyle} />
+                    <Bar dataKey="count" fill={BLUE} radius={[4, 4, 0, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              ) : (
+                <EmptyState text="No finalised accountability yet" />
+              )}
+              <div style={{ fontSize: 11, color: MUTED, marginTop: 8 }}>
+                P = Product, S = Sales, C = Consumer Issue
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* Aging + Subject */}
+      <section style={{ background: "#fff", padding: "32px 24px" }}>
+        <div style={{ maxWidth: 1100, margin: "0 auto", display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 16 }}>
           <div className="chart-card">
             <div className="section-label">SLA</div>
             <div style={{ fontSize: 21, fontWeight: 600, margin: "4px 0 12px" }}>Pending aging</div>

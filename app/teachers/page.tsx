@@ -6,7 +6,7 @@ import { Stars, StatusBadge, EmptyState } from "@/components/ui";
 import { TeacherScorecard } from "@/components/teacher-scorecard";
 import { TeacherProductLog } from "@/components/teacher-product-log";
 import { SearchableSelect } from "@/components/searchable-select";
-import { LIGHT_GRAY, MUTED, BLUE, NEAR_BLACK, TEACHERS, ACCT_TYPES } from "@/lib/types";
+import { LIGHT_GRAY, MUTED, BLUE, NEAR_BLACK, TEACHERS, ACCT_TYPES, ACCT_FINAL_CATEGORIES, acctFinalLabel } from "@/lib/types";
 import type { TeacherSession } from "@/lib/types";
 import { initials } from "@/lib/utils";
 import { isFinalized } from "@/lib/scorecard";
@@ -337,7 +337,21 @@ export default function TeachersPage() {
     const pours = filteredDemos.filter((d) => d.pour.length > 0).length;
     const pourCats: Record<string, number> = {};
     filteredDemos.forEach((d) => d.pour.forEach((p) => { pourCats[p.cat] = (pourCats[p.cat] || 0) + 1; }));
-    return { total, conv, rate, avg, pours, pourCats };
+    // Accountability breakdown — counts finalised allocations per category.
+    // A demo with [Product, Sales] contributes 1 to each bucket.
+    const acctFinalCounts: Record<string, number> = { Product: 0, Sales: 0, Consumer: 0 };
+    let finalisedCount = 0;
+    filteredDemos.forEach((d) => {
+      if (!d.accountabilityFinalAt) return;
+      finalisedCount++;
+      d.accountabilityFinal.forEach((c) => {
+        if (acctFinalCounts[c] !== undefined) acctFinalCounts[c]++;
+      });
+    });
+    const awaitingCount = filteredDemos.filter(
+      (d) => d.status === "Not Converted" && !d.accountabilityFinalAt
+    ).length;
+    return { total, conv, rate, avg, pours, pourCats, acctFinalCounts, finalisedCount, awaitingCount };
   }, [drillData, filteredDemos]);
 
   // Session-side predicate — flows the drill filters into the Product log
@@ -782,6 +796,33 @@ export default function TeachersPage() {
                         </ResponsiveContainer>
                       )}
                     </div>
+                    <div>
+                      <div className="section-label" style={{ marginBottom: 8 }}>
+                        Accountability breakdown
+                        <span style={{ fontWeight: 400, color: MUTED, marginLeft: 6 }}>
+                          · {drillStats.finalisedCount} finalised · {drillStats.awaitingCount} awaiting
+                        </span>
+                      </div>
+                      {drillStats.finalisedCount === 0 ? (
+                        <EmptyState text="No finalised accountability yet" />
+                      ) : (
+                        <ResponsiveContainer width="100%" height={140}>
+                          <BarChart
+                            data={ACCT_FINAL_CATEGORIES.map((c) => ({
+                              name: c.label,
+                              count: drillStats.acctFinalCounts[c.value] ?? 0,
+                            }))}
+                            layout="vertical"
+                            barSize={12}
+                          >
+                            <XAxis type="number" tick={{ fontSize: 10, fill: MUTED }} axisLine={false} tickLine={false} allowDecimals={false} />
+                            <YAxis type="category" dataKey="name" tick={{ fontSize: 11, fill: NEAR_BLACK }} axisLine={false} tickLine={false} width={100} />
+                            <Tooltip contentStyle={{ borderRadius: 10, border: "1px solid #e8e8ed", fontSize: 12 }} />
+                            <Bar dataKey="count" fill={BLUE} radius={[0, 4, 4, 0]} />
+                          </BarChart>
+                        </ResponsiveContainer>
+                      )}
+                    </div>
                   </div>
                 </div>
               )}
@@ -829,26 +870,77 @@ export default function TeachersPage() {
                   <div className="section-label" style={{ marginTop: 24, marginBottom: 10 }}>Accountability log</div>
                   {(() => {
                     const acctHistory = filteredDemos
-                      .filter((d) => d.status === "Not Converted" && d.acctType)
+                      .filter(
+                        (d) =>
+                          d.status === "Not Converted" &&
+                          ((d.accountabilityFinal && d.accountabilityFinal.length > 0) || d.acctType)
+                      )
                       .sort((a, b) => b.date.localeCompare(a.date));
+                    const acctPill = (v: string) => {
+                      const palette =
+                        v === "Product"
+                          ? { bg: "#FFF8E1", fg: "#8B6914" }
+                          : v === "Sales"
+                          ? { bg: "#E3F2FD", fg: "#0D47A1" }
+                          : v === "Consumer"
+                          ? { bg: "#E8F5E9", fg: "#1B5E20" }
+                          : { bg: LIGHT_GRAY, fg: MUTED };
+                      return palette;
+                    };
                     return acctHistory.length === 0 ? (
                       <EmptyState text="No accountability records" />
                     ) : (
-                      acctHistory.map((d) => (
-                        <div key={d.id} style={{ padding: "10px 14px", borderBottom: "1px solid #f0f0f0", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                          <div>
-                            <div style={{ fontSize: 13, fontWeight: 500 }}>{d.student}</div>
-                            <div style={{ fontSize: 11, color: MUTED }}>{d.date} · {d.level} {d.subject}</div>
+                      acctHistory.map((d) => {
+                        const final = d.accountabilityFinal ?? [];
+                        const isFinalised = !!d.accountabilityFinalAt;
+                        return (
+                          <div
+                            key={d.id}
+                            style={{
+                              padding: "10px 14px",
+                              borderBottom: "1px solid #f0f0f0",
+                              display: "flex",
+                              justifyContent: "space-between",
+                              alignItems: "center",
+                              gap: 10,
+                              flexWrap: "wrap",
+                            }}
+                          >
+                            <div>
+                              <div style={{ fontSize: 13, fontWeight: 500 }}>{d.student}</div>
+                              <div style={{ fontSize: 11, color: MUTED }}>{d.date} · {d.level} {d.subject}</div>
+                            </div>
+                            <div style={{ display: "flex", flexWrap: "wrap", gap: 4, alignItems: "center" }}>
+                              {isFinalised && final.length > 0 ? (
+                                final.map((v) => {
+                                  const p = acctPill(v);
+                                  return (
+                                    <span
+                                      key={v}
+                                      style={{
+                                        padding: "3px 10px", borderRadius: 980, fontSize: 11, fontWeight: 600,
+                                        background: p.bg, color: p.fg,
+                                      }}
+                                    >
+                                      {acctFinalLabel(v)}
+                                    </span>
+                                  );
+                                })
+                              ) : d.acctType ? (
+                                <span
+                                  title="Sales suggestion — awaiting analyst finalisation"
+                                  style={{
+                                    padding: "3px 10px", borderRadius: 980, fontSize: 11, fontWeight: 500,
+                                    background: LIGHT_GRAY, color: MUTED, fontStyle: "italic",
+                                  }}
+                                >
+                                  Sales: {d.acctType}
+                                </span>
+                              ) : null}
+                            </div>
                           </div>
-                          <span style={{
-                            padding: "3px 10px", borderRadius: 980, fontSize: 11, fontWeight: 600,
-                            background: d.acctType === "Product" ? "#FFF8E1" : d.acctType === "Sales" ? "#E3F2FD" : LIGHT_GRAY,
-                            color: d.acctType === "Product" ? "#8B6914" : d.acctType === "Sales" ? "#0D47A1" : MUTED,
-                          }}>
-                            {d.acctType}
-                          </span>
-                        </div>
-                      ))
+                        );
+                      })
                     );
                   })()}
 

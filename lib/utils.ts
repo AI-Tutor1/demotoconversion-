@@ -53,12 +53,16 @@ export function inDateRange(dateStr: string, range: string): boolean {
 export function exportCSV(data: Record<string, unknown>[]): void {
   const headers = [
     "Date", "Teacher", "Student", "Level", "Subject",
-    "POUR", "Rating", "Status", "Agent", "Accountability",
+    "POUR", "Rating", "Status", "Agent",
+    "Sales suggestion", "Accountability (final)", "Finalised at",
   ];
   const rows = data.map((d: Record<string, unknown>) => [
     d.date, d.teacher, d.student, d.level, d.subject,
     Array.isArray(d.pour) ? d.pour.map((p: { cat: string }) => p.cat).join("; ") : "",
-    d.analystRating, d.status, d.agent, d.acctType,
+    d.analystRating, d.status, d.agent,
+    d.acctType ?? "",
+    Array.isArray(d.accountabilityFinal) ? d.accountabilityFinal.join("|") : "",
+    d.accountabilityFinalAt ?? "",
   ]);
   const csv = [headers, ...rows]
     .map((r) => r.map((c) => '"' + String(c).replace(/"/g, '""') + '"').join(","))
@@ -70,4 +74,16 @@ export function exportCSV(data: Record<string, unknown>[]): void {
   a.download = "demo_export.csv";
   a.click();
   URL.revokeObjectURL(url);
+}
+
+// Sales Step 10 suggestion heuristic — single-valued, shared with the
+// /conducted drawer as an analyst hint. Source of truth for the rule.
+export function suggestAccountability(demo: {
+  analystRating: number;
+  pour: unknown[];
+  studentRaw: number;
+}): string {
+  if (demo.analystRating <= 2 || demo.pour.length > 0) return "Product";
+  if (demo.analystRating >= 4 && demo.studentRaw >= 7) return "Sales";
+  return "Consumer";
 }

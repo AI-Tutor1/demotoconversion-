@@ -4,7 +4,8 @@ import { useStore } from "@/lib/store";
 import Link from "next/link";
 import { StatusBadge, EmptyState } from "@/components/ui";
 import { SearchableSelect } from "@/components/searchable-select";
-import { TEACHERS, LEVELS, SUBJECTS, LIGHT_GRAY, MUTED, BLUE, NEAR_BLACK, ACCT_TYPES } from "@/lib/types";
+import AccountabilityDrawer from "@/components/accountability-drawer";
+import { TEACHERS, LEVELS, SUBJECTS, LIGHT_GRAY, MUTED, BLUE, NEAR_BLACK, ACCT_TYPES, acctFinalLabel } from "@/lib/types";
 import { isFinalized } from "@/lib/scorecard";
 import { ageDays, exportCSV } from "@/lib/utils";
 
@@ -77,7 +78,9 @@ export default function ConductedPage() {
   const [fAge, setFAge] = useState("");
   const [fApproval, setFApproval] = useState("");
   const [fAcct, setFAcct] = useState("");
+  const [fFinalised, setFFinalised] = useState(""); // "", "yes", "no"
   const [fRating, setFRating] = useState("");
+  const [drawerDemoId, setDrawerDemoId] = useState<number | null>(null);
   const [fAgent, setFAgent] = useState("");
   const [fStudent, setFStudent] = useState("");
   const [fGrade, setFGrade] = useState("");
@@ -121,7 +124,17 @@ export default function ConductedPage() {
 
       if (fAgent   && x.agent         !== fAgent)   return false;
       if (fStage   && x.workflowStage !== fStage)   return false;
-      if (fAcct    && x.acctType      !== fAcct)    return false;
+      // Account type matches against BOTH the finalised allocation and the
+      // sales suggestion — the user is asking "is this demo attributed to X?"
+      // not "is X sales' guess?". Finalised takes precedence; if none finalised,
+      // fall back to the sales suggestion.
+      if (fAcct) {
+        const final = x.accountabilityFinal ?? [];
+        const hit = final.length > 0 ? final.includes(fAcct) : x.acctType === fAcct;
+        if (!hit) return false;
+      }
+      if (fFinalised === "yes" && !x.accountabilityFinalAt) return false;
+      if (fFinalised === "no"  &&  x.accountabilityFinalAt) return false;
       if (fStudent && x.student       !== fStudent) return false;
       if (fGrade   && x.grade         !== fGrade)   return false;
       if (fPour && !x.pour.some((p) => p.cat === fPour)) return false;
@@ -186,21 +199,21 @@ export default function ConductedPage() {
   }, [
     rangedDemos, draftsByDemoId, sortBy,
     fStatus, fTeacher, fLevel, fSubject,
-    search, fStage, fAge, fApproval, fAcct, fRating,
+    search, fStage, fAge, fApproval, fAcct, fFinalised, fRating,
     fAgent, fStudent, fGrade, fPour,
     fMarketing, fRecording, dateFrom, dateTo,
   ]);
 
   const anyFilter =
     fStatus !== "all" || !!fTeacher || !!fLevel || !!fSubject ||
-    !!search || !!fStage || !!fAge || !!fApproval || !!fAcct || !!fRating ||
+    !!search || !!fStage || !!fAge || !!fApproval || !!fAcct || !!fFinalised || !!fRating ||
     !!fAgent || !!fStudent || !!fGrade || !!fPour ||
     !!fMarketing || !!fRecording || !!dateFrom || !!dateTo;
 
   const clearFilters = () => {
     setFStatus("all"); setFTeacher(""); setFLevel(""); setFSubject("");
     setSearch(""); setFStage(""); setFAge(""); setFApproval("");
-    setFAcct(""); setFRating(""); setFAgent(""); setFStudent("");
+    setFAcct(""); setFFinalised(""); setFRating(""); setFAgent(""); setFStudent("");
     setFGrade(""); setFPour(""); setFMarketing(""); setFRecording("");
     setDateFrom(""); setDateTo("");
   };
@@ -208,6 +221,7 @@ export default function ConductedPage() {
   const acctColor = (acctType: string) => {
     if (acctType === "Sales") return { bg: "#E3F2FD", fg: "#0D47A1" };
     if (acctType === "Product") return { bg: "#FFF8E1", fg: "#8B6914" };
+    if (acctType === "Consumer") return { bg: "#E8F5E9", fg: "#1B5E20" };
     return { bg: LIGHT_GRAY, fg: MUTED };
   };
 
@@ -419,6 +433,22 @@ export default function ConductedPage() {
               </div>
 
               <div style={FIELD}>
+                <label style={LABEL}>Finalised</label>
+                <SearchableSelect
+                  options={[
+                    { value: "yes", label: "Finalised" },
+                    { value: "no",  label: "Awaiting" },
+                  ]}
+                  value={fFinalised}
+                  onChange={setFFinalised}
+                  placeholder="Any"
+                  clearLabel="Any"
+                  buttonClassName={SS_BTN}
+                  width="100%"
+                />
+              </div>
+
+              <div style={FIELD}>
                 <label style={LABEL}>Min analyst rating</label>
                 <SearchableSelect
                   options={RATING_OPTS}
@@ -576,11 +606,17 @@ export default function ConductedPage() {
                     const scoreDisplay = hasDraft
                       ? `${draft.draft_data.total_score}/32`
                       : d.analystRating > 0 ? `${d.analystRating}/5` : "—";
-                    const ac = acctColor(d.acctType);
+                    const final = d.accountabilityFinal ?? [];
+                    const isFinalised = !!d.accountabilityFinalAt;
+                    const clickable = d.status === "Not Converted";
                     return (
                       <tr
                         key={d.id}
-                        style={{ borderBottom: "1px solid #f5f5f7" }}
+                        style={{
+                          borderBottom: "1px solid #f5f5f7",
+                          cursor: clickable ? "pointer" : "default",
+                        }}
+                        onClick={clickable ? () => setDrawerDemoId(d.id) : undefined}
                         onMouseEnter={(e) => (e.currentTarget.style.background = "#fafafa")}
                         onMouseLeave={(e) => (e.currentTarget.style.background = "")}
                       >
@@ -593,18 +629,40 @@ export default function ConductedPage() {
                         <td style={{ padding: "9px 12px" }}><StatusBadge status={d.status} /></td>
                         <td style={{ padding: "9px 12px", color: MUTED }}>{d.agent || "—"}</td>
                         <td style={{ padding: "9px 12px" }}>
-                          {d.status === "Not Converted" && d.acctType ? (
-                            <span style={{
-                              padding: "3px 10px", borderRadius: 980, fontSize: 11, fontWeight: 600,
-                              background: ac.bg, color: ac.fg,
-                            }}>
-                              {d.acctType}
+                          {d.status !== "Not Converted" ? (
+                            <span style={{ color: MUTED }}>—</span>
+                          ) : isFinalised && final.length > 0 ? (
+                            <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+                              {final.map((v) => {
+                                const ac = acctColor(v);
+                                return (
+                                  <span
+                                    key={v}
+                                    style={{
+                                      padding: "3px 10px", borderRadius: 980, fontSize: 11, fontWeight: 600,
+                                      background: ac.bg, color: ac.fg,
+                                    }}
+                                  >
+                                    {acctFinalLabel(v)}
+                                  </span>
+                                );
+                              })}
+                            </div>
+                          ) : d.acctType ? (
+                            <span
+                              title="Sales suggestion — awaiting analyst finalisation"
+                              style={{
+                                padding: "3px 10px", borderRadius: 980, fontSize: 11, fontWeight: 500,
+                                background: LIGHT_GRAY, color: MUTED, fontStyle: "italic",
+                              }}
+                            >
+                              Sales: {d.acctType}
                             </span>
                           ) : (
-                            <span style={{ color: MUTED }}>—</span>
+                            <span style={{ color: MUTED, fontSize: 11 }}>Awaiting</span>
                           )}
                         </td>
-                        <td style={{ padding: "9px 12px" }}>
+                        <td style={{ padding: "9px 12px" }} onClick={(e) => e.stopPropagation()}>
                           {hasDraft ? (
                             <Link href={`/analyst/${d.id}`} style={{ color: BLUE, textDecoration: "none", fontWeight: 500 }}>
                               View →
@@ -622,6 +680,8 @@ export default function ConductedPage() {
           </div>
         </div>
       </section>
+
+      <AccountabilityDrawer demoId={drawerDemoId} onClose={() => setDrawerDemoId(null)} />
     </>
   );
 }

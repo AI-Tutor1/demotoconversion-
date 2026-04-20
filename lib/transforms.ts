@@ -55,14 +55,21 @@ export type DemoRow = {
   is_draft: boolean;
   ai_draft_id: string | null;
   ai_approval_rate: number | null;
+  accountability_final_at: string | null;
+  accountability_final_by: string | null;
   created_at: string;
   updated_at: string;
   pour_issues?: PourIssueRow[];
+  demo_accountability?: AccountabilityRow[];
 };
 
 export type PourIssueRow = {
   category: string;
   description: string;
+};
+
+export type AccountabilityRow = {
+  category: string;
 };
 
 // ─── DB → App ────────────────────────────────────────────────
@@ -94,6 +101,9 @@ export function dbRowToDemo(row: DemoRow): Demo {
     comments: row.comments,
     verbatim: row.verbatim,
     acctType: row.acct_type,
+    accountabilityFinal: (row.demo_accountability ?? []).map((r) => r.category),
+    accountabilityFinalAt: row.accountability_final_at ?? null,
+    accountabilityFinalBy: row.accountability_final_by ?? null,
     link: row.link,
     recording: row.recording ?? "",
     transcript: row.transcript ?? null,

@@ -34,6 +34,23 @@ else
   echo "  ✓ Law 3"
 fi
 
+# ── Accountability label guard ──────────────────────────────────────────────
+# Post-2026-04-20 "Accountability allocation" feature: `demo.acctType` is the
+# SALES SUGGESTION (single value). The finalised allocation lives on
+# `demo.accountabilityFinal[]`. Never render `acctType` under an
+# "Accountability" label — that mis-communicates the semantic layer.
+# Allowlisted files: drawer + sales Step 10 (now labelled "Sales suggestion").
+hits=$(grep -rnE 'acctType.*Accountability|Accountability.*acctType' app/ components/ lib/ \
+  --include='*.tsx' --include='*.ts' 2>/dev/null \
+  | grep -v 'components/accountability-drawer.tsx' \
+  | grep -v 'components/sales-input.tsx' \
+  | grep -v '//' || true)
+if [ -n "$hits" ]; then
+  echo "  ✗ Accountability label guard (acctType mis-labelled as Accountability):"; echo "$hits"; fail=1
+else
+  echo "  ✓ Accountability label guard"
+fi
+
 # ── Law 4: bracket balance per file ──────────────────────────────────────────
 # Naive char-count — matches CLAUDE.md. Strings / regex can false-positive; if
 # that happens in practice, upgrade to AST parse.

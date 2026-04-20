@@ -3,7 +3,8 @@ import { useState, useMemo, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useStore } from "@/lib/store";
 import { Field } from "@/components/ui";
-import { ACCT_TYPES, MUTED, BLUE, NEAR_BLACK, type Demo } from "@/lib/types";
+import { ACCT_TYPES, MUTED, BLUE, NEAR_BLACK, acctFinalLabel, type Demo } from "@/lib/types";
+import { suggestAccountability } from "@/lib/utils";
 
 // ─── Inline UI helpers ────────────────────────────────────────────────────────
 
@@ -195,11 +196,25 @@ export default function SalesInput({ demo }: SalesInputProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [demo.id]);
 
-  const suggestedAcct = useMemo(() => {
-    if (demo.analystRating <= 2 || demo.pour.length > 0) return "Product";
-    if (demo.analystRating >= 4 && demo.studentRaw >= 7) return "Sales";
-    return "Consumer";
-  }, [demo.analystRating, demo.pour, demo.studentRaw]);
+  const suggestedAcct = useMemo(
+    () =>
+      suggestAccountability({
+        analystRating: demo.analystRating,
+        pour: demo.pour,
+        studentRaw: demo.studentRaw,
+      }),
+    [demo.analystRating, demo.pour, demo.studentRaw]
+  );
+
+  const isFinalised = !!demo.accountabilityFinalAt;
+  const finalisedLabel = useMemo(() => {
+    if (!isFinalised) return "";
+    const cats = demo.accountabilityFinal.map(acctFinalLabel).join(", ");
+    const when = demo.accountabilityFinalAt
+      ? new Date(demo.accountabilityFinalAt).toLocaleDateString()
+      : "";
+    return when ? `Finalised on ${when}: ${cats}` : `Finalised: ${cats}`;
+  }, [isFinalised, demo.accountabilityFinal, demo.accountabilityFinalAt]);
 
   const handleSubmit = () => {
     if (sf.feedbackConfused === true && !sf.feedbackConfusedDetail.trim()) {
@@ -400,23 +415,36 @@ export default function SalesInput({ demo }: SalesInputProps) {
           />
         </Field>
 
-        {/* Accountability (when Not Converted) */}
+        {/* Sales suggestion (when Not Converted) — locked after analyst finalisation */}
         {sf.status === "Not Converted" && (
           <div style={{ background: "#FFF8E1", borderRadius: 12, padding: "14px 18px", marginTop: 8, border: "1px solid #F5D98E" }}>
-            <div style={{ fontSize: 11, fontWeight: 600, color: "#8B6914", textTransform: "uppercase", marginBottom: 6 }}>Step 10 — Accountability</div>
-            {suggestedAcct && (
-              <p style={{ fontSize: 12, color: "#8B6914", marginBottom: 8 }}>
-                Suggested: <strong>{suggestedAcct}</strong>
-              </p>
+            <div style={{ fontSize: 11, fontWeight: 600, color: "#8B6914", textTransform: "uppercase", marginBottom: 6 }}>Step 10 — Sales suggestion</div>
+            {isFinalised ? (
+              <>
+                <p style={{ fontSize: 12, color: "#8B6914", marginBottom: 6 }}>
+                  Your suggestion: <strong>{demo.acctType || "—"}</strong>
+                </p>
+                <p style={{ fontSize: 12, color: "#8B6914" }}>
+                  {finalisedLabel} <span style={{ color: MUTED }}>(read-only)</span>
+                </p>
+              </>
+            ) : (
+              <>
+                {suggestedAcct && (
+                  <p style={{ fontSize: 12, color: "#8B6914", marginBottom: 8 }}>
+                    Auto-suggestion: <strong>{suggestedAcct}</strong>
+                  </p>
+                )}
+                <select
+                  className="apple-input apple-select"
+                  value={sf.acctType}
+                  onChange={(e) => setSf((p) => ({ ...p, acctType: e.target.value }))}
+                >
+                  <option value="">Select type...</option>
+                  {ACCT_TYPES.map((a) => <option key={a}>{a}</option>)}
+                </select>
+              </>
             )}
-            <select
-              className="apple-input apple-select"
-              value={sf.acctType}
-              onChange={(e) => setSf((p) => ({ ...p, acctType: e.target.value }))}
-            >
-              <option value="">Select type...</option>
-              {ACCT_TYPES.map((a) => <option key={a}>{a}</option>)}
-            </select>
           </div>
         )}
 

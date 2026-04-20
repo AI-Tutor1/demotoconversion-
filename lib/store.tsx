@@ -83,6 +83,8 @@ interface StoreContextType {
     status: Extract<DemoDraftStatus, "approved" | "partially_edited">
   ) => Promise<void>;
   rejectDraft: (draftId: string) => Promise<void>;
+  finalizeAccountability: (demoId: number, categories: string[]) => Promise<{ ok: true } | { ok: false; error: string }>;
+  clearAccountability: (demoId: number) => Promise<{ ok: true } | { ok: false; error: string }>;
   processingDemoIds: Set<number>;
   approvedSessions: ApprovedSession[];
   teacherSessions: TeacherSession[];
@@ -174,7 +176,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     setLoading(true);
     const { data, error } = await supabase
       .from("demos")
-      .select("*, pour_issues ( category, description )")
+      .select("*, pour_issues ( category, description ), demo_accountability ( category )")
       .order("ts", { ascending: false });
     if (error) {
       flash(`Failed to load demos: ${error.message}`);
@@ -366,13 +368,14 @@ export function StoreProvider({ children }: { children: ReactNode }) {
               Array.from(processedRealtimeIds.current).slice(-250)
             );
           }
-          const { data: pours } = await supabase
-            .from("pour_issues")
-            .select("category, description")
-            .eq("demo_id", newId);
+          const [{ data: pours }, { data: accts }] = await Promise.all([
+            supabase.from("pour_issues").select("category, description").eq("demo_id", newId),
+            supabase.from("demo_accountability").select("category").eq("demo_id", newId),
+          ]);
           const row = {
             ...(payload.new as unknown as DemoRow),
             pour_issues: pours ?? [],
+            demo_accountability: accts ?? [],
           };
           setDemosRaw((prev) =>
             prev.some((d) => d.id === newId)
@@ -386,13 +389,14 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         { event: "UPDATE", schema: "public", table: "demos" },
         async (payload) => {
           const newId = Number((payload.new as unknown as { id: number }).id);
-          const { data: pours } = await supabase
-            .from("pour_issues")
-            .select("category, description")
-            .eq("demo_id", newId);
+          const [{ data: pours }, { data: accts }] = await Promise.all([
+            supabase.from("pour_issues").select("category, description").eq("demo_id", newId),
+            supabase.from("demo_accountability").select("category").eq("demo_id", newId),
+          ]);
           const row = {
             ...(payload.new as unknown as DemoRow),
             pour_issues: pours ?? [],
+            demo_accountability: accts ?? [],
           };
           setDemosRaw((prev) =>
             prev.map((d) => (d.id === newId ? dbRowToDemo(row) : d))
@@ -431,6 +435,27 @@ export function StoreProvider({ children }: { children: ReactNode }) {
                       desc: p.description,
                     })),
                   }
+                : d
+            )
+          );
+        }
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "demo_accountability" },
+        async (payload) => {
+          const newRec = payload.new as unknown as { demo_id?: number };
+          const oldRec = payload.old as unknown as { demo_id?: number };
+          const demoId = Number(newRec?.demo_id ?? oldRec?.demo_id);
+          if (!demoId) return;
+          const { data: accts } = await supabase
+            .from("demo_accountability")
+            .select("category")
+            .eq("demo_id", demoId);
+          setDemosRaw((prev) =>
+            prev.map((d) =>
+              d.id === demoId
+                ? { ...d, accountabilityFinal: (accts ?? []).map((r) => r.category) }
                 : d
             )
           );
@@ -733,6 +758,70 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     [flash]
   );
 
+  // ─── Accountability finalisation ──────────────────────────────
+  // Bypass setDemos' diff engine — accountability is owned by the RPC
+  // (atomic DELETE + INSERT + UPDATE), realtime fills state back in.
+  // Optimistic update keeps the UI snappy; realtime is the source of truth.
+  const finalizeAccountability = useCallback(
+    async (demoId: number, categories: string[]) => {
+      if (categories.length === 0) {
+        return { ok: false as const, error: "At least one category required" };
+      }
+      const { error } = await supabase.rpc("finalize_demo_accountability", {
+        p_demo_id: demoId,
+        p_categories: categories,
+      });
+      if (error) {
+        flash(`Failed to finalise accountability: ${error.message}`);
+        return { ok: false as const, error: error.message };
+      }
+      const nowIso = new Date().toISOString();
+      const {
+        data: { user: authUser },
+      } = await supabase.auth.getUser();
+      setDemosRaw((prev) =>
+        prev.map((d) =>
+          d.id === demoId
+            ? {
+                ...d,
+                accountabilityFinal: [...categories],
+                accountabilityFinalAt: nowIso,
+                accountabilityFinalBy: authUser?.id ?? d.accountabilityFinalBy,
+              }
+            : d
+        )
+      );
+      return { ok: true as const };
+    },
+    [flash]
+  );
+
+  const clearAccountability = useCallback(
+    async (demoId: number) => {
+      const { error } = await supabase.rpc("clear_demo_accountability", {
+        p_demo_id: demoId,
+      });
+      if (error) {
+        flash(`Failed to clear accountability: ${error.message}`);
+        return { ok: false as const, error: error.message };
+      }
+      setDemosRaw((prev) =>
+        prev.map((d) =>
+          d.id === demoId
+            ? {
+                ...d,
+                accountabilityFinal: [],
+                accountabilityFinalAt: null,
+                accountabilityFinalBy: null,
+              }
+            : d
+        )
+      );
+      return { ok: true as const };
+    },
+    [flash]
+  );
+
   // ─── Derived memos ────────────────────────────────────────────
   const rangedDemos = useMemo(
     () => demos.filter((d) => !d.isDraft && inDateRange(d.date, dateRange)),
@@ -841,6 +930,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         createDemo,
         approveDraft,
         rejectDraft,
+        finalizeAccountability,
+        clearAccountability,
         processingDemoIds,
         approvedSessions,
         teacherSessions,

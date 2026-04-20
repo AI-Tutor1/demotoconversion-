@@ -181,6 +181,7 @@ UNDERSTAND → LOCATE → PLAN → IMPLEMENT → VERIFY → REPORT
 | `lib/review-transforms.ts` | Enrollment/session DB transforms | When changing enrollment/session schema |
 | `components/session-draft-review.tsx` | Session scorecard review | When modifying session approval flow |
 | `components/teacher-product-log.tsx` | Approved-sessions list (per teacher or student). Accepts optional `filterFn: (s: TeacherSession) => boolean` prop for narrowing sessions **after** the stable-FK teacher/student match. | When changing /teachers Product log, wiring drill-level filters into the Product log tab, or building /students/[id] |
+| `components/accountability-drawer.tsx` | Slide-in panel opened from /conducted row-click. Analyst/manager finalises the Product/Sales/Consumer-Issue multi-select for a Not-Converted demo. Goes through `finalizeAccountability` / `clearAccountability` store actions (atomic RPCs). | When changing accountability UX, adding categories, or wiring accountability into other surfaces (e.g. /students/[id]) |
 | `backend/app/scheduler.py` | APScheduler job that auto-retries failed sessions every 15 min | When tuning retry behavior, adding failure classifications, or debugging stuck sessions |
 | `app/globals.css` | All CSS classes | When adding new CSS |
 | `supabase/migrations/` | Schema history | When changing DB shape |
@@ -231,6 +232,7 @@ setDemos(prev => [{
   student: f.student, level, subject, pour: [], review: "",
   studentRaw: 7, analystRating: 0, status: "Pending" as const,
   suggestions: "", agent: "", comments: "", verbatim: "", acctType: "",
+  accountabilityFinal: [], accountabilityFinalAt: null, accountabilityFinalBy: null,
   link: "", recording: "", marketing: false, ts: Date.now(),
   workflowStage: "pending_sales",
 }, ...prev]);
@@ -268,7 +270,10 @@ Every `Demo` (see `lib/types.ts`):
 | `suggestions` | `string` | — |
 | `agent` | `string` | Sales agent name (Phase-1 display; Phase-2+ uses `sales_agent_id` FK) |
 | `comments`, `verbatim` | `string` | Sales inputs |
-| `acctType` | `"Sales" \| "Product" \| "Consumer" \| ""` | Populated when Not Converted |
+| `acctType` | `"Sales" \| "Product" \| "Consumer" \| ""` | **Sales suggestion** (Step 10). Locked read-only once an analyst finalises on `/conducted` |
+| `accountabilityFinal` | `string[]` | Product-analyst finalisation — multi-select subset of `Product / Sales / Consumer`. Set via `/conducted` drawer → `finalize_demo_accountability` RPC. Empty until finalised. Authoritative over `acctType` for analytics/teachers |
+| `accountabilityFinalAt` | `string \| null` | ISO timestamp. Non-null ⇔ `accountabilityFinal.length ≥ 1` (invariant enforced by the RPCs) |
+| `accountabilityFinalBy` | `string \| null` | UUID of the analyst/manager who finalised |
 | `link` | `string` | Sales reference URL |
 | `recording` | `string` | Recording URL set by analyst (Step 1 of pipeline) |
 | `marketing` | `boolean` | Marketing lead flag |

@@ -238,7 +238,12 @@ export default function SalesFeedbackReport({ demo }: SalesFeedbackReportProps) 
               )}
               {demo.acctType && (
                 <span>
-                  Accountability: <strong style={{ color: NEAR_BLACK }}>{demo.acctType}</strong>
+                  Sales suggestion: <strong style={{ color: NEAR_BLACK }}>{demo.acctType}</strong>
+                </span>
+              )}
+              {demo.accountabilityFinal && demo.accountabilityFinal.length > 0 && (
+                <span>
+                  Final accountability: <strong style={{ color: NEAR_BLACK }}>{demo.accountabilityFinal.join(", ")}</strong>
                 </span>
               )}
               {demo.marketing && (

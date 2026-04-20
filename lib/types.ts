@@ -45,6 +45,12 @@ export interface Demo {
   comments: string;
   verbatim: string;
   acctType: string;
+  // Product-analyst accountability finalisation (layered on top of acctType).
+  // acctType is the sales suggestion; accountabilityFinal is the authoritative
+  // multi-select allocation set by an analyst/manager on /conducted.
+  accountabilityFinal: string[];
+  accountabilityFinalAt: string | null;
+  accountabilityFinalBy: string | null;
   link: string;
   recording: string;
   transcript: string | null;
@@ -341,6 +347,18 @@ export const GRADES = [
 ];
 
 export const ACCT_TYPES = ["Sales", "Product", "Consumer"];
+
+// Product-analyst finalisation palette. DB values match ACCT_TYPES; the
+// display label for "Consumer" is "Consumer Issue" per product decision.
+export const ACCT_FINAL_CATEGORIES: readonly { value: string; label: string }[] = [
+  { value: "Product",  label: "Product" },
+  { value: "Sales",    label: "Sales" },
+  { value: "Consumer", label: "Consumer Issue" },
+] as const;
+
+export function acctFinalLabel(value: string): string {
+  return ACCT_FINAL_CATEGORIES.find(c => c.value === value)?.label ?? value;
+}
 
 // ─── PRODUCT REVIEW WORKFLOW — ENROLLMENTS & SESSIONS ───
 
