@@ -1,21 +1,23 @@
 "use client";
 
-import React, { useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useStore } from "@/lib/store";
-import { BLUE, CURRICULA, GRADES, LEVELS, LIGHT_GRAY, MUTED, SUBJECTS, TEACHER_TIERS, type TeacherProfile, type TeacherProfileStatus } from "@/lib/types";
-import { teacherFullName } from "@/lib/teacher-transforms";
+import {
+  BLUE, CURRICULA, GRADES, LEVELS, LIGHT_GRAY, MUTED, SUBJECTS, TEACHER_TIERS,
+  type TeacherAvailabilitySlot, type TeacherProfile, type TeacherProfileStatus, type TeacherRate,
+} from "@/lib/types";
+import {
+  dbRowToTeacherAvailability, dbRowToTeacherRate, teacherFullName,
+} from "@/lib/teacher-transforms";
+import { supabase } from "@/lib/supabase";
 import HrCandidateForm from "@/components/hr-candidate-form";
 import HrInterviewDrawer from "@/components/hr-interview-drawer";
 
 /**
  * /hr — HR workspace.
- *
  * Tabs: Candidates · Pending · Approved · Rejected (counts in chips)
- * Row click → HrInterviewDrawer (interview + rates + schedule + decision).
- * "+ New Candidate" → HrCandidateForm (intake form).
- *
- * Route-gated by middleware.ts to hr + manager. Analysts / sales never see
- * this page even via direct URL.
+ * Row click → HrInterviewDrawer. "+ New Candidate" → HrCandidateForm.
+ * Route-gated by middleware.ts to hr + manager.
  */
 
 type TabKey = "candidates" | "pending" | "approved" | "rejected";
@@ -27,29 +29,93 @@ const TABS: { key: TabKey; label: string; statuses: TeacherProfileStatus[] }[] =
   { key: "rejected",   label: "Rejected",   statuses: ["rejected", "archived"] },
 ];
 
+const GRID = "1.4fr 110px 200px 170px 120px 150px 80px 120px 70px";
+
+function slotHours(s: TeacherAvailabilitySlot): number {
+  const [sh, sm] = s.startTime.split(":").map(Number);
+  const [eh, em] = s.endTime.split(":").map(Number);
+  return (eh * 60 + em - sh * 60 - sm) / 60;
+}
+
+function weeklyHoursSummary(slots: TeacherAvailabilitySlot[]): { label: string; hasSlots: boolean } {
+  if (!slots.length) return { label: "No vacant slots", hasSlots: false };
+  const total = slots.reduce((sum, s) => sum + slotHours(s), 0);
+  return { label: `${Math.round(total)} hrs / wk`, hasSlots: true };
+}
+
+function rateSummary(rates: TeacherRate[]): string {
+  if (!rates.length) return "—";
+  const min = Math.min(...rates.map((r) => r.ratePerHour));
+  const max = Math.max(...rates.map((r) => r.ratePerHour));
+  const currency = rates[0].currency ?? "PKR";
+  return min === max ? `${currency} ${min}` : `${currency} ${min}–${max}`;
+}
+
+const FILTER_LABEL: React.CSSProperties = {
+  fontSize: 11, fontWeight: 600, color: MUTED,
+  textTransform: "uppercase", letterSpacing: "0.04em",
+  marginBottom: 4, display: "block",
+};
+
+const FILTER_ITEMS = [
+  { key: "tier",       label: "Tier",       placeholder: "All tiers",     options: TEACHER_TIERS },
+  { key: "subject",    label: "Subject",    placeholder: "All subjects",  options: SUBJECTS },
+  { key: "curriculum", label: "Curriculum", placeholder: "All curricula", options: CURRICULA },
+  { key: "level",      label: "Level",      placeholder: "All levels",    options: LEVELS },
+  { key: "grade",      label: "Grade",      placeholder: "All grades",    options: GRADES },
+] as const;
+
+type FilterKey = typeof FILTER_ITEMS[number]["key"];
+
 export default function HrPage() {
   const { teacherProfiles, user } = useStore();
   const [tab, setTab] = useState<TabKey>("candidates");
   const [search, setSearch] = useState("");
   const [showForm, setShowForm] = useState(false);
   const [openProfile, setOpenProfile] = useState<TeacherProfile | null>(null);
-  const [fSubject, setFSubject] = useState("");
-  const [fLevel, setFLevel] = useState("");
-  const [fCurriculum, setFCurriculum] = useState("");
-  const [fGrade, setFGrade] = useState("");
-  const [fTier, setFTier] = useState("");
-
   const [showFilters, setShowFilters] = useState(false);
-
-  const hasFilters = !!(fTier || fSubject || fCurriculum || fLevel || fGrade);
-
-  const FILTER_LABEL: React.CSSProperties = {
-    fontSize: 11, fontWeight: 600, color: MUTED,
-    textTransform: "uppercase", letterSpacing: "0.04em",
-    marginBottom: 4, display: "block",
-  };
+  const [filters, setFilters] = useState<Record<FilterKey, string>>({
+    tier: "", subject: "", curriculum: "", level: "", grade: "",
+  });
+  const [ratesByProfileId, setRatesByProfileId] = useState<Record<string, TeacherRate[]>>({});
+  const [availByProfileId, setAvailByProfileId] = useState<Record<string, TeacherAvailabilitySlot[]>>({});
 
   const canAccess = user?.role === "hr" || user?.role === "manager";
+  const hasFilters = Object.values(filters).some(Boolean);
+
+  const setFilter = (key: FilterKey, value: string) =>
+    setFilters((prev) => ({ ...prev, [key]: value }));
+  const clearFilters = () =>
+    setFilters({ tier: "", subject: "", curriculum: "", level: "", grade: "" });
+
+  const fetchRatesAndAvailability = useCallback(async () => {
+    const [{ data: rateRows }, { data: availRows }] = await Promise.all([
+      supabase.from("teacher_rates").select("*"),
+      supabase.from("teacher_availability").select("*"),
+    ]);
+    if (rateRows) {
+      const map: Record<string, TeacherRate[]> = {};
+      for (const r of rateRows) {
+        const id = r.teacher_profile_id as string;
+        if (!map[id]) map[id] = [];
+        map[id].push(dbRowToTeacherRate(r));
+      }
+      setRatesByProfileId(map);
+    }
+    if (availRows) {
+      const map: Record<string, TeacherAvailabilitySlot[]> = {};
+      for (const r of availRows) {
+        const id = r.teacher_profile_id as string;
+        if (!map[id]) map[id] = [];
+        map[id].push(dbRowToTeacherAvailability(r));
+      }
+      setAvailByProfileId(map);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (canAccess) fetchRatesAndAvailability();
+  }, [canAccess, fetchRatesAndAvailability]);
 
   const byTab = useMemo(() => {
     const m: Record<TabKey, TeacherProfile[]> = {
@@ -76,14 +142,14 @@ export default function HrPage() {
           (p.tid?.toString() ?? "").includes(q);
         if (!textMatch) return false;
       }
-      if (fTier && (p.tier ?? "") !== fTier) return false;
-      if (fSubject && !p.subjectsInterested.includes(fSubject) && !p.teachingMatrix.some((m) => m.subject === fSubject)) return false;
-      if (fCurriculum && !p.teachingMatrix.some((m) => m.curriculum === fCurriculum)) return false;
-      if (fLevel && !p.teachingMatrix.some((m) => m.level === fLevel)) return false;
-      if (fGrade && !p.teachingMatrix.some((m) => (m.grade ?? "") === fGrade)) return false;
+      if (filters.tier && (p.tier ?? "") !== filters.tier) return false;
+      if (filters.subject && !p.subjectsInterested.includes(filters.subject) && !p.teachingMatrix.some((m) => m.subject === filters.subject)) return false;
+      if (filters.curriculum && !p.teachingMatrix.some((m) => m.curriculum === filters.curriculum)) return false;
+      if (filters.level && !p.teachingMatrix.some((m) => m.level === filters.level)) return false;
+      if (filters.grade && !p.teachingMatrix.some((m) => (m.grade ?? "") === filters.grade)) return false;
       return true;
     });
-  }, [byTab, tab, search, fSubject, fLevel, fCurriculum, fGrade, fTier]);
+  }, [byTab, tab, search, filters]);
 
   if (!canAccess) {
     return (
@@ -100,14 +166,14 @@ export default function HrPage() {
           <p className="section-label">HR</p>
           <h1 style={{ fontSize: 40, fontWeight: 600, lineHeight: 1.1 }}>Teacher onboarding.</h1>
           <p style={{ color: MUTED, marginTop: 8, fontSize: 15 }}>
-            Intake, interview, and approve tutors. Only approved tutors surface
-            to analyst + sales.
+            Intake, interview, and approve tutors. Only approved tutors surface to analyst + sales.
           </p>
         </div>
       </section>
 
       <section style={{ background: "#fff", padding: "40px 24px 80px" }}>
         <div style={{ maxWidth: 1200, margin: "0 auto" }}>
+
           {/* Tabs */}
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 24 }}>
             <div style={{ display: "flex", gap: 4, borderBottom: "1px solid #f0f0f0" }}>
@@ -119,25 +185,19 @@ export default function HrPage() {
                     key={t.key}
                     onClick={() => setTab(t.key)}
                     style={{
-                      padding: "10px 16px",
-                      border: "none",
-                      background: "none",
+                      padding: "10px 16px", border: "none", background: "none",
                       borderBottom: active ? `2px solid ${BLUE}` : "2px solid transparent",
                       color: active ? BLUE : MUTED,
-                      fontSize: 14,
-                      fontWeight: active ? 600 : 500,
-                      cursor: "pointer",
-                      marginBottom: -1,
+                      fontSize: 14, fontWeight: active ? 600 : 500,
+                      cursor: "pointer", marginBottom: -1,
                     }}
                   >
                     {t.label}
                     <span style={{
-                      marginLeft: 8,
-                      fontSize: 11,
+                      marginLeft: 8, fontSize: 11,
                       background: active ? BLUE : "#e5e5e5",
                       color: active ? "#fff" : MUTED,
-                      padding: "1px 8px",
-                      borderRadius: 980,
+                      padding: "1px 8px", borderRadius: 980,
                     }}>
                       {count}
                     </span>
@@ -199,65 +259,45 @@ export default function HrPage() {
             </span>
           </div>
 
+          {/* Filter panel */}
           {showFilters && (
             <div
               id="hr-filter-panel"
               className="animate-fade-up"
               style={{
-                marginBottom: 24, padding: 16, background: LIGHT_GRAY, borderRadius: 14,
-                display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))",
-                gap: 12, alignItems: "end",
+                marginBottom: 24, padding: "16px 20px",
+                background: LIGHT_GRAY, borderRadius: 14,
               }}
             >
-              <div style={{ display: "flex", flexDirection: "column" }}>
-                <label style={FILTER_LABEL}>Tier</label>
-                <select className="apple-select" value={fTier} onChange={(e) => setFTier(e.target.value)} style={{ width: "100%" }}>
-                  <option value="">All tiers</option>
-                  {TEACHER_TIERS.map((t) => <option key={t} value={t}>{t}</option>)}
-                </select>
+              <div style={{
+                display: "grid",
+                gridTemplateColumns: "repeat(5, 1fr)",
+                gap: "12px 16px",
+              }}>
+                {FILTER_ITEMS.map(({ key, label, placeholder, options }) => (
+                  <div key={key} style={{ display: "flex", flexDirection: "column" }}>
+                    <label style={FILTER_LABEL}>{label}</label>
+                    <select
+                      className="apple-select"
+                      value={filters[key]}
+                      onChange={(e) => setFilter(key, e.target.value)}
+                      style={{ width: "100%" }}
+                    >
+                      <option value="">{placeholder}</option>
+                      {options.map((o) => <option key={o} value={o}>{o}</option>)}
+                    </select>
+                  </div>
+                ))}
               </div>
-
-              <div style={{ display: "flex", flexDirection: "column" }}>
-                <label style={FILTER_LABEL}>Subject</label>
-                <select className="apple-select" value={fSubject} onChange={(e) => setFSubject(e.target.value)} style={{ width: "100%" }}>
-                  <option value="">All subjects</option>
-                  {SUBJECTS.map((s) => <option key={s} value={s}>{s}</option>)}
-                </select>
-              </div>
-
-              <div style={{ display: "flex", flexDirection: "column" }}>
-                <label style={FILTER_LABEL}>Curriculum</label>
-                <select className="apple-select" value={fCurriculum} onChange={(e) => setFCurriculum(e.target.value)} style={{ width: "100%" }}>
-                  <option value="">All curricula</option>
-                  {CURRICULA.map((c) => <option key={c} value={c}>{c}</option>)}
-                </select>
-              </div>
-
-              <div style={{ display: "flex", flexDirection: "column" }}>
-                <label style={FILTER_LABEL}>Level</label>
-                <select className="apple-select" value={fLevel} onChange={(e) => setFLevel(e.target.value)} style={{ width: "100%" }}>
-                  <option value="">All levels</option>
-                  {LEVELS.map((l) => <option key={l} value={l}>{l}</option>)}
-                </select>
-              </div>
-
-              <div style={{ display: "flex", flexDirection: "column" }}>
-                <label style={FILTER_LABEL}>Grade</label>
-                <select className="apple-select" value={fGrade} onChange={(e) => setFGrade(e.target.value)} style={{ width: "100%" }}>
-                  <option value="">All grades</option>
-                  {GRADES.map((g) => <option key={g} value={g}>{g}</option>)}
-                </select>
-              </div>
-
               {hasFilters && (
-                <div style={{ display: "flex", alignItems: "flex-end" }}>
+                <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 12 }}>
                   <button
                     type="button"
-                    onClick={() => { setFTier(""); setFSubject(""); setFCurriculum(""); setFLevel(""); setFGrade(""); }}
+                    onClick={clearFilters}
                     style={{
                       background: "transparent", color: BLUE, border: `1px solid ${BLUE}`,
-                      padding: "10px 16px", borderRadius: 10, fontSize: 13, fontWeight: 500,
-                      cursor: "pointer", whiteSpace: "nowrap", width: "100%",
+                      padding: "7px 16px", borderRadius: 10, fontSize: 13, fontWeight: 500,
+                      cursor: "pointer",
                     }}
                   >
                     Clear filters
@@ -267,68 +307,141 @@ export default function HrPage() {
             </div>
           )}
 
-          {/* Rows */}
+          {/* Table */}
           {filtered.length === 0 ? (
             <div style={{ padding: 60, textAlign: "center", color: MUTED, background: LIGHT_GRAY, borderRadius: 12 }}>
               {search.trim() ? "No candidates match your search." : `No ${tab}.`}
             </div>
           ) : (
-            <div style={{ border: "1px solid #f0f0f0", borderRadius: 12, overflow: "hidden" }}>
-              <div style={{
-                display: "grid",
-                gridTemplateColumns: "1fr 140px 180px 100px 140px 80px",
-                gap: 8,
-                padding: "10px 16px",
-                background: "#fafafa",
-                fontSize: 11,
-                fontWeight: 600,
-                color: MUTED,
-                textTransform: "uppercase",
-                letterSpacing: "0.04em",
-              }}>
-                <div>Name</div>
-                <div>HR#</div>
-                <div>Phone</div>
-                <div>Tier</div>
-                <div>Status</div>
-                <div>Tutor ID</div>
+            <div style={{ border: "1px solid #f0f0f0", borderRadius: 12, overflow: "hidden", overflowX: "auto" }}>
+              <div style={{ minWidth: 980 }}>
+                {/* Header */}
+                <div style={{
+                  display: "grid", gridTemplateColumns: GRID, gap: 8,
+                  padding: "10px 16px", background: "#fafafa",
+                  fontSize: 11, fontWeight: 600, color: MUTED,
+                  textTransform: "uppercase", letterSpacing: "0.04em",
+                }}>
+                  <div>Name</div>
+                  <div>HR#</div>
+                  <div>Subjects</div>
+                  <div>Curricula</div>
+                  <div>Rate / hr</div>
+                  <div>Availability</div>
+                  <div>Tier</div>
+                  <div>Status</div>
+                  <div>Tutor ID</div>
+                </div>
+
+                {/* Rows */}
+                {filtered.map((p) => {
+                  const subjects  = [...new Set(p.teachingMatrix.map((m) => m.subject).filter(Boolean))];
+                  const curricula = [...new Set(p.teachingMatrix.map((m) => m.curriculum).filter(Boolean))];
+                  const rates     = ratesByProfileId[p.id] ?? [];
+                  const slots     = availByProfileId[p.id] ?? [];
+                  const avail     = weeklyHoursSummary(slots);
+                  return (
+                    <button
+                      key={p.id}
+                      onClick={() => setOpenProfile(p)}
+                      style={{
+                        display: "grid", gridTemplateColumns: GRID, gap: 8,
+                        width: "100%", minWidth: 980,
+                        padding: "12px 16px", background: "#fff",
+                        border: "none", borderTop: "1px solid #f5f5f7",
+                        textAlign: "left", cursor: "pointer", fontSize: 13,
+                        alignItems: "center",
+                      }}
+                      onMouseEnter={(e) => { e.currentTarget.style.background = "#fafafa"; }}
+                      onMouseLeave={(e) => { e.currentTarget.style.background = "#fff"; }}
+                    >
+                      {/* Name */}
+                      <div style={{ fontWeight: 500 }}>{teacherFullName(p)}</div>
+
+                      {/* HR# */}
+                      <div style={{ color: MUTED, fontSize: 12 }}>{p.hrApplicationNumber}</div>
+
+                      {/* Subjects */}
+                      <div style={{ display: "flex", flexWrap: "wrap", gap: 4, alignItems: "center" }}>
+                        {subjects.length === 0 ? (
+                          <span style={{ color: MUTED }}>—</span>
+                        ) : (
+                          <>
+                            {subjects.slice(0, 2).map((s) => (
+                              <span key={s} style={{
+                                fontSize: 11, background: "#e8f0fd", color: BLUE,
+                                padding: "2px 7px", borderRadius: 980, fontWeight: 500,
+                              }}>{s}</span>
+                            ))}
+                            {subjects.length > 2 && (
+                              <span style={{ fontSize: 11, color: MUTED }}>+{subjects.length - 2}</span>
+                            )}
+                          </>
+                        )}
+                      </div>
+
+                      {/* Curricula */}
+                      <div style={{ display: "flex", flexWrap: "wrap", gap: 4, alignItems: "center" }}>
+                        {curricula.length === 0 ? (
+                          <span style={{ color: MUTED }}>—</span>
+                        ) : (
+                          <>
+                            {curricula.slice(0, 2).map((c) => (
+                              <span key={c} style={{
+                                fontSize: 11, background: LIGHT_GRAY, color: "#1d1d1f",
+                                padding: "2px 7px", borderRadius: 980, fontWeight: 500,
+                              }}>{c}</span>
+                            ))}
+                            {curricula.length > 2 && (
+                              <span style={{ fontSize: 11, color: MUTED }}>+{curricula.length - 2}</span>
+                            )}
+                          </>
+                        )}
+                      </div>
+
+                      {/* Rate / hr */}
+                      <div style={{ fontSize: 12, fontWeight: rates.length > 0 ? 500 : 400, color: rates.length > 0 ? "#1d1d1f" : MUTED }}>
+                        {rateSummary(rates)}
+                      </div>
+
+                      {/* Availability */}
+                      <div>
+                        <span style={{
+                          fontSize: 11, fontWeight: 500,
+                          padding: "3px 9px", borderRadius: 980,
+                          background: avail.hasSlots ? "#e8f0fd" : LIGHT_GRAY,
+                          color: avail.hasSlots ? BLUE : MUTED,
+                        }}>
+                          {avail.label}
+                        </span>
+                      </div>
+
+                      {/* Tier */}
+                      <div>
+                        {p.tier ? (
+                          <span style={{
+                            fontSize: 11, fontWeight: 600,
+                            background: BLUE, color: "#fff",
+                            padding: "2px 8px", borderRadius: 980,
+                          }}>
+                            {p.tier}
+                          </span>
+                        ) : (
+                          <span style={{ color: MUTED }}>—</span>
+                        )}
+                      </div>
+
+                      {/* Status */}
+                      <div style={{ color: MUTED, fontSize: 12, textTransform: "capitalize" }}>
+                        {p.status.replace(/_/g, " ")}
+                      </div>
+
+                      {/* Tutor ID */}
+                      <div style={{ color: MUTED, fontSize: 12 }}>{p.tid ?? "—"}</div>
+                    </button>
+                  );
+                })}
               </div>
-              {filtered.map((p) => (
-                <button
-                  key={p.id}
-                  onClick={() => setOpenProfile(p)}
-                  style={{
-                    display: "grid",
-                    gridTemplateColumns: "1fr 140px 180px 100px 140px 80px",
-                    gap: 8,
-                    width: "100%",
-                    padding: "12px 16px",
-                    background: "#fff",
-                    border: "none",
-                    borderTop: "1px solid #f5f5f7",
-                    textAlign: "left",
-                    cursor: "pointer",
-                    fontSize: 13,
-                  }}
-                  onMouseEnter={(e) => { e.currentTarget.style.background = "#fafafa"; }}
-                  onMouseLeave={(e) => { e.currentTarget.style.background = "#fff"; }}
-                >
-                  <div style={{ fontWeight: 500 }}>{teacherFullName(p)}</div>
-                  <div style={{ color: MUTED }}>{p.hrApplicationNumber}</div>
-                  <div style={{ color: MUTED }}>{p.phoneNumber.startsWith("UNKNOWN-") ? "—" : p.phoneNumber}</div>
-                  <div>
-                    {p.tier ? (
-                      <span style={{ fontSize: 11, fontWeight: 600, background: BLUE, color: "#fff", padding: "2px 8px", borderRadius: 980 }}>
-                        {p.tier}
-                      </span>
-                    ) : (
-                      <span style={{ color: MUTED }}>—</span>
-                    )}
-                  </div>
-                  <div style={{ color: MUTED }}>{p.status.replace("_", " ")}</div>
-                  <div style={{ color: MUTED }}>{p.tid ?? "—"}</div>
-                </button>
-              ))}
             </div>
           )}
         </div>
