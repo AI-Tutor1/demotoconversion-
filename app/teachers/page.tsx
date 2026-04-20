@@ -6,7 +6,8 @@ import { Stars, StatusBadge, EmptyState } from "@/components/ui";
 import { TeacherScorecard } from "@/components/teacher-scorecard";
 import { TeacherProductLog } from "@/components/teacher-product-log";
 import { SearchableSelect } from "@/components/searchable-select";
-import { LIGHT_GRAY, MUTED, BLUE, NEAR_BLACK, TEACHERS, ACCT_TYPES, ACCT_FINAL_CATEGORIES, acctFinalLabel } from "@/lib/types";
+import { LIGHT_GRAY, MUTED, BLUE, NEAR_BLACK, ACCT_TYPES, ACCT_FINAL_CATEGORIES, acctFinalLabel } from "@/lib/types";
+import { teacherFullName } from "@/lib/teacher-transforms";
 import type { TeacherSession } from "@/lib/types";
 import { initials } from "@/lib/utils";
 import { isFinalized } from "@/lib/scorecard";
@@ -73,7 +74,7 @@ function toOpts(arr: string[]) {
 }
 
 export default function TeachersPage() {
-  const { rangedDemos: demos, draftsByDemoId, user, sessionTeachers, teacherSessions } = useStore();
+  const { rangedDemos: demos, draftsByDemoId, user, sessionTeachers, teacherSessions, approvedTeachers } = useStore();
   const [sortBy, setSortBy] = useState("rate-desc");
   const [drill, setDrill] = useState<string | null>(null);
   const [tab, setTab] = useState<TabKey>("dashboard");
@@ -128,7 +129,15 @@ export default function TeachersPage() {
     // profile card is reachable. The Product log tab inside still shows only
     // approved sessions — this only controls card visibility.
     if (canSeeProductLog) {
-      const nameToTid = new Map(TEACHERS.map((t) => [t.name.toLowerCase(), t.uid]));
+      // Join on approved teacher names (includes everyone backfilled from the
+      // legacy TEACHERS roster plus new HR-approved tutors). Two tutors can
+      // share a name, so we fall back to matching the first one we find —
+      // acceptable given cards are navigable to /teachers/[id].
+      const nameToTid = new Map(
+        approvedTeachers
+          .filter((t) => t.tid != null)
+          .map((t) => [teacherFullName(t).toLowerCase(), t.tid as number])
+      );
       sessionTeachers.forEach((st) => {
         const nm = st.teacherUserName.trim();
         if (!nm) return;
@@ -146,7 +155,7 @@ export default function TeachersPage() {
     if (sortBy === "volume-desc") arr.sort((a, b) => b.total - a.total);
     if (sortBy === "name") arr.sort((a, b) => a.name.localeCompare(b.name));
     return arr;
-  }, [demos, sortBy, sessionTeachers, canSeeProductLog]);
+  }, [demos, sortBy, sessionTeachers, canSeeProductLog, approvedTeachers]);
 
   // ── derived option lists for OUTER grid filters ────────────────
   const subjects = useMemo(() => uniqSort(demos.map((d) => d.subject)), [demos]);

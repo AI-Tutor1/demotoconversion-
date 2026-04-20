@@ -5,7 +5,8 @@ import { useStore } from "@/lib/store";
 import { StatusBadge, EmptyState } from "@/components/ui";
 import { ScorecardSummary } from "@/components/scorecard-summary";
 import { SearchableSelect } from "@/components/searchable-select";
-import { TEACHERS, MUTED, BLUE, LIGHT_GRAY, ACCT_TYPES } from "@/lib/types";
+import { MUTED, BLUE, LIGHT_GRAY, ACCT_TYPES } from "@/lib/types";
+import { teacherFullName } from "@/lib/teacher-transforms";
 import { ageDays, ageColor, ageTextColor, formatMonth, exportCSV } from "@/lib/utils";
 import { isFinalized } from "@/lib/scorecard";
 
@@ -64,7 +65,7 @@ function toOpts(arr: string[]) {
 // ─── Page ─────────────────────────────────────────────────────────
 
 export default function SalesPage() {
-  const { rangedDemos, setDemos, flash, setConfirm, logActivity, salesAgents, draftsByDemoId } = useStore();
+  const { rangedDemos, setDemos, flash, setConfirm, logActivity, salesAgents, draftsByDemoId, approvedTeachers } = useStore();
   const [selDemo, setSelDemo] = useState<number | null>(null);
   const [bulkSel, setBulkSel] = useState<number[]>([]);
 
@@ -246,7 +247,7 @@ export default function SalesPage() {
               value={fTeacher}
               onChange={setFTeacher}
               placeholder="All teachers"
-              options={Array.from(new Set(TEACHERS.map((t) => t.name))).map((n) => ({ value: n, label: n }))}
+              options={Array.from(new Set(approvedTeachers.map(teacherFullName))).map((n) => ({ value: n, label: n }))}
             />
             <SearchableSelect
               variant="dark"

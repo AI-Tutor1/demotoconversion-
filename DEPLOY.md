@@ -103,9 +103,34 @@ exit
 
 When there are **no new Python deps** (the common case for a pure-logic fix), just `pm2 restart backend` — pm2 re-execs the existing wrapper and the restart picks up the new `.py` files.
 
+**Before restarting uvicorn after a pull, verify the venv has the imports your code needs** — a stale uvicorn can serve cached bytecode for days without exposing that a new import was added. One-line check (expand with whatever the current `requirements.txt` declares as top-level imports):
+
+```bash
+<path-to-venv>/bin/python -c "import apscheduler, anthropic, groq, fastapi, supabase, langchain_openai, langgraph" && echo OK
+```
+
+If that fails, re-run `pip install -r requirements.txt` before `pm2 restart backend`. Full rationale: `memory/feedback_backend_venv_stale_bytecode.md`.
+
+**After adding a new FastAPI router file** (e.g. `backend/app/routers/recruitment.py` in the HR pipeline commit), uvicorn must be fully restarted — pm2 handles this, but if you're debugging locally with `uvicorn` directly, pass `--reload` or kill and start. Verify routes are live: `curl -s http://<host>/openapi.json | python3 -c "import sys,json; [print(p) for p in sorted(json.load(sys.stdin)['paths'])]" | grep -i hr-interview`.
+
 ### Migrations
 
 Apply to Supabase **before** the `npm run build` step — the frontend assumes the new schema the moment it boots. Use the Supabase MCP `apply_migration` tool (from this repo's Claude sessions) or the Supabase dashboard SQL editor. Verify with `execute_sql` probes. Full rule: CLAUDE.md § "Before You Deploy" and `memory/feedback_local_before_domain.md`.
+
+**Migration order matters when multiple tables cross-reference** — apply in timestamp order, never skip. Example: the HR pipeline's 9 migrations `20260421000100..000108` must land after `20260420000100_demo_accountability` (which was still pending on prod as of 2026-04-20 — `scripts/_migration-manifest-check.sh` caught it). If the manifest check reports any "called from frontend but NOT deployed to DB" RPC, that migration is missing on the destination — apply it before deploy or the live page that calls that RPC will 404 at runtime.
+
+### Realtime publication check
+
+If a new page's UI shows "stuck processing" that never updates, or a status banner never transitions from Queued → Running, the table isn't in the `supabase_realtime` publication. One-line check:
+
+```sql
+SELECT relname FROM pg_class c
+  JOIN pg_namespace n ON c.relnamespace = n.oid
+WHERE n.nspname = 'public' AND c.relkind = 'r'
+  AND relname NOT IN (SELECT tablename FROM pg_publication_tables WHERE pubname = 'supabase_realtime');
+```
+
+Any result whose UI subscribes to `postgres_changes` needs `ALTER PUBLICATION supabase_realtime ADD TABLE public.<name>;`. This was the root cause of the HR interview drawer's frozen status banner on 2026-04-20 — `task_queue` missed it. Full rule: `memory/feedback_realtime_publication_check.md`.
 
 ### When it breaks
 

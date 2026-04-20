@@ -23,6 +23,17 @@ All three live in `supabase/migrations/20260415000006_create_demo_rpc.sql` and `
 
 Both live in `supabase/migrations/20260416000102_upsert_rpcs.sql` and use `SECURITY INVOKER` + `SET search_path = public`.
 
+### HR / Teacher Onboarding RPCs (called from `/hr` and `/teachers/[id]`)
+
+| RPC | Args | Returns | Security | Purpose |
+|-----|------|---------|----------|---------|
+| `upsert_teacher_candidate(payload jsonb)` | Candidate fields (HR#, phone, names, email, CV, qualification, subjects) | `jsonb` `{id, status}` | INVOKER (hr+manager via role check) | Insert-or-update by `hr_application_number`. |
+| `submit_interview(p_id uuid, p_recording_link text, p_teaching_matrix jsonb, p_notes text, p_interview_rubric jsonb)` | Profile id + interview fields (rubric is optional — COALESCE preserves existing) | `jsonb` `{id, status}` | **DEFINER** (hr+manager) | Persists interview fields. Does **not** enqueue `task_queue` — the backend owns that (see `memory/feedback_never_pre_enqueue_task_queue_in_rpc.md`). |
+| `finalize_teacher_decision(p_id uuid, outcome text, p_tid bigint, p_reject_reason text)` | Profile id + outcome + tutor ID (required on approve) + reject reason (required on reject) | `jsonb` `{id, outcome}` | INVOKER (hr+manager via role check) | Atomic status transition. Approval sets `tid`; invariant trigger enforces `status='approved' ⇔ tid IS NOT NULL`. |
+| `update_teacher_profile(p_id uuid, payload jsonb)` | Profile id + whitelisted fields (first/last name, email, phone, CV, qualification, subjects, teaching_matrix, interview_notes, interview_rubric) | `jsonb` `{id}` | **DEFINER** (hr+manager+**analyst**) | Edit button on `/teachers/[id]`. Silently drops `tid`/`status`/`approved_*`/`rejected_*`/`hr_application_number` from payload — never relied on as validation. |
+
+All four live in `supabase/migrations/20260421000105_teacher_profiles_rpcs.sql`. See [memory/project_hr_pipeline.md](memory/project_hr_pipeline.md) for the full architecture (tables, RLS matrix, lifecycle, trims).
+
 ### Backend endpoints (FastAPI on `:8000`)
 
 **Demo pipeline endpoints** require `Authorization: Bearer <supabase-access-token>` and enforce role. Both are **idempotent**:
@@ -38,6 +49,15 @@ Both live in `supabase/migrations/20260416000102_upsert_rpcs.sql` and use `SECUR
 |-------|--------|-------------------|
 | `POST /api/v1/sessions/{id}/process-recording` | auth + role ∈ {analyst, manager} + session exists + recording_link valid | `task_queue` has running task OR `session_drafts` has `pending_review` row |
 | `POST /api/v1/sessions/{id}/analyze` | auth + role + session exists + transcript not empty | same |
+
+**HR / Teacher Onboarding endpoints** — hr + manager only (router: `backend/app/routers/recruitment.py`):
+
+| Route | Guards | Returns 409 when… |
+|-------|--------|-------------------|
+| `POST /api/v1/hr-interviews/{profile_id}/process-recording` | auth + role ∈ {hr, manager} + profile exists + `interview_recording_link` valid | `task_queue` has running/queued `hr_interview_ingest` row for this profile |
+| `POST /api/v1/hr-interviews/{profile_id}/analyze` | auth + role + profile exists + transcript not empty | `task_queue` has running/queued `hr_interview_analyst` row for this profile |
+
+Both reuse `backend/agents/ingest.py` (Whisper transcription, pure) and — **in v1 only** — `backend/agents/demo_analyst.py` as a bootstrap for the HR scorecard (see AI Agent Architecture section below).
 
 ### Auto-retry of failed sessions (2026-04-19)
 
@@ -211,6 +231,26 @@ Cards are categorized by **workflow state**, not age:
 | **Converted** | `status === "Converted"` |
 | **Not converted** | `status === "Not Converted"` |
 
+## HR / Teacher Onboarding pipeline (2026-04-20, live)
+
+Parallel to the 11-step demo pipeline, the HR pipeline governs **how tutors enter the system**. Full architecture in [memory/project_hr_pipeline.md](memory/project_hr_pipeline.md); summary here.
+
+**Status lifecycle** on `teacher_profiles.status`:
+
+```
+candidate → interview_scheduled → (pending | approved | rejected | archived)
+```
+
+- **candidate** — HR added the intake form (phone, CV, qualifications, subjects). Not yet reviewable by analyst.
+- **interview_scheduled** — HR submitted a recording URL + teaching matrix + rubric. Transcription + AI scorecard trigger via the backend.
+- **pending** — scorecard generated; awaiting HR/manager decision.
+- **approved** — `tid` assigned; teacher is now visible to analyst + sales (`/analyst` dropdown, `/teachers`).
+- **rejected** — reject reason recorded; archived from active queues.
+
+**Visibility rule:** analyst + sales_agent see only `status='approved'` via RLS. HR + manager see everything.
+
+**Backfill:** all 171 legacy teachers (previously in hardcoded `TEACHERS` array in `lib/types.ts`) were inserted with `status='approved'` and sentinel values `hr_application_number='LEGACY-<uid>'`, `phone_number='UNKNOWN-<uid>'`. HR or analyst fill real values via the Edit button on `/teachers/[id]` over time.
+
 ## AI Agent Architecture (Phase 3)
 
 Seven AI agents are planned as virtual employees:
@@ -224,6 +264,7 @@ Seven AI agents are planned as virtual employees:
 | **Classifier** | Marked Not Converted | Auto-classifies accountability with reasoning |
 | **Teacher Coach** | Monthly | Generates coaching report per teacher |
 | **Escalation** | Hourly | Checks for demos exceeding time thresholds |
+| **HR Interview Analyst** ⚠️ | HR submits interview | **v1 stub — currently reuses Demo Analyst's rubric prompt verbatim.** Output shape is identical (`q1…q8` scored against teaching methodology, curriculum alignment, etc.). Produces a `hr_interview_drafts` row. A dedicated HR-rubric prompt (communication, subject depth, professionalism, red flags, hire recommendation) is a follow-up; until then every field label + threshold in the scorecard reads as a demo evaluation, not an interview evaluation. Flagged inline in the drawer's footer copy. |
 
 **Human-in-the-loop**: Every AI output goes to a `demo_drafts` table first. The human sees a split view (AI draft + source transcript) with per-field accept/edit toggles. `approval_rate` tracks what percentage of AI output was accepted unchanged.
 

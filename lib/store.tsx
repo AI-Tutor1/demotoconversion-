@@ -19,18 +19,20 @@ import {
   DemoDraftStatus,
   ApprovedSession,
   TeacherSession,
+  TeacherProfile,
 } from "./types";
 import { SEED_ACTIVITY } from "./data";
 import { inDateRange, ageDays } from "./utils";
 import { supabase } from "./supabase";
 import { dbRowToDemo, demoToInsertRow, pourToDbRows, type DemoRow } from "./transforms";
 import { dbRowToApprovedSession, dbRowToTeacherSession } from "./review-transforms";
+import { dbRowToTeacherProfile } from "./teacher-transforms";
 import { createSupabaseSync } from "./supabase-sync";
 
 export interface UserProfile {
   id: string;
   email: string;
-  role: "analyst" | "sales_agent" | "manager";
+  role: "analyst" | "sales_agent" | "manager" | "hr";
   full_name: string;
 }
 
@@ -89,6 +91,30 @@ interface StoreContextType {
   approvedSessions: ApprovedSession[];
   teacherSessions: TeacherSession[];
   sessionTeachers: { teacherUserName: string; teacherUserId: string | null }[];
+  // HR / Teacher onboarding
+  teacherProfiles: TeacherProfile[];
+  approvedTeachers: TeacherProfile[];
+  createTeacherCandidate: (
+    payload: Partial<TeacherProfile> & { hrApplicationNumber: string; phoneNumber: string; firstName: string; lastName: string }
+  ) => Promise<{ ok: true; id: string } | { ok: false; error: string }>;
+  submitInterview: (
+    profileId: string,
+    recordingLink: string,
+    teachingMatrix: { level: string; subject: string; curriculum: string }[],
+    notes: string,
+    rubric?: import("./types").InterviewRubric | null
+  ) => Promise<{ ok: true } | { ok: false; error: string }>;
+  finalizeTeacherDecision: (
+    profileId: string,
+    outcome: "approved" | "pending" | "rejected",
+    tid: number | null,
+    rejectReason: string | null
+  ) => Promise<{ ok: true } | { ok: false; error: string }>;
+  updateTeacherProfile: (
+    profileId: string,
+    payload: Partial<TeacherProfile>
+  ) => Promise<{ ok: true } | { ok: false; error: string }>;
+  processHrRecording: (profileId: string) => Promise<{ ok: true } | { ok: false; error: string }>;
   stats: {
     total: number;
     converted: number;
@@ -119,6 +145,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const [approvedSessions, setApprovedSessions] = useState<ApprovedSession[]>([]);
   const [teacherSessions, setTeacherSessions] = useState<TeacherSession[]>([]);
   const [sessionTeachers, setSessionTeachers] = useState<{ teacherUserName: string; teacherUserId: string | null }[]>([]);
+  const [teacherProfiles, setTeacherProfiles] = useState<TeacherProfile[]>([]);
 
   const processedRealtimeIds = useRef<Set<number>>(new Set());
   const processedRealtimeDraftIds = useRef<Set<string>>(new Set());
@@ -275,6 +302,20 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     setSessionTeachers(unique);
   }, []);
 
+  // Teacher profiles — approved teachers are visible to every role; candidates
+  // / pending / rejected rows are only visible to hr and manager (RLS-enforced).
+  const fetchTeacherProfiles = useCallback(async () => {
+    const { data, error } = await supabase
+      .from("teacher_profiles")
+      .select("*")
+      .order("last_name", { ascending: true });
+    if (error) {
+      setTeacherProfiles([]);
+      return;
+    }
+    setTeacherProfiles((data ?? []).map(dbRowToTeacherProfile));
+  }, []);
+
   const fetchProcessingDemoIds = useCallback(async () => {
     const { data } = await supabase
       .from("task_queue")
@@ -323,6 +364,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         syncUserProfile();
         fetchDrafts();
         fetchProcessingDemoIds();
+        fetchTeacherProfiles();
       } else if (event === "SIGNED_OUT") {
         setDemosRaw([]);
         setUser(null);
@@ -332,13 +374,14 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         setApprovedSessions([]);
         setTeacherSessions([]);
         setSessionTeachers([]);
+        setTeacherProfiles([]);
         setLoading(false);
       }
     });
     return () => {
       data.subscription.unsubscribe();
     };
-  }, [fetchDemos, syncUserProfile, fetchDrafts, fetchProcessingDemoIds]);
+  }, [fetchDemos, syncUserProfile, fetchDrafts, fetchProcessingDemoIds, fetchTeacherProfiles]);
 
   // Flash reader for middleware route-denied redirects (?denied=<prefix>)
   useEffect(() => {
@@ -466,6 +509,133 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       supabase.removeChannel(channel);
     };
   }, []);
+
+  // ─── Realtime: teacher_profiles ──────────────────────────────
+  useEffect(() => {
+    const channel = supabase
+      .channel("teacher-profiles-sync")
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "teacher_profiles" },
+        () => {
+          // Simple refetch on any change — volume is low (< 300 rows) and
+          // the query is cheap. The alternative (per-event merge) adds
+          // complexity for no user-visible benefit here.
+          fetchTeacherProfiles();
+        }
+      )
+      .subscribe();
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [fetchTeacherProfiles]);
+
+  // ─── HR / Teacher onboarding action creators ─────────────────
+
+  const createTeacherCandidate = useCallback(
+    async (payload: Partial<TeacherProfile> & { hrApplicationNumber: string; phoneNumber: string; firstName: string; lastName: string }) => {
+      const rpcPayload = {
+        hr_application_number: payload.hrApplicationNumber,
+        phone_number: payload.phoneNumber,
+        first_name: payload.firstName,
+        last_name: payload.lastName,
+        email: payload.email ?? null,
+        cv_link: payload.cvLink ?? null,
+        qualification: payload.qualification ?? null,
+        subjects_interested: payload.subjectsInterested ?? [],
+        tier: payload.tier ?? null,
+      };
+      const { data, error } = await supabase.rpc("upsert_teacher_candidate", { payload: rpcPayload });
+      if (error) return { ok: false as const, error: error.message };
+      const id = (data as { id: string } | null)?.id ?? "";
+      fetchTeacherProfiles();
+      return { ok: true as const, id };
+    },
+    [fetchTeacherProfiles]
+  );
+
+  const submitInterview = useCallback(
+    async (
+      profileId: string,
+      recordingLink: string,
+      teachingMatrix: { level: string; subject: string; curriculum: string }[],
+      notes: string,
+      rubric?: import("./types").InterviewRubric | null
+    ) => {
+      const { error } = await supabase.rpc("submit_interview", {
+        p_id: profileId,
+        p_recording_link: recordingLink,
+        p_teaching_matrix: teachingMatrix,
+        p_notes: notes,
+        p_interview_rubric: rubric ?? null,
+      });
+      if (error) return { ok: false as const, error: error.message };
+      fetchTeacherProfiles();
+      return { ok: true as const };
+    },
+    [fetchTeacherProfiles]
+  );
+
+  const finalizeTeacherDecision = useCallback(
+    async (profileId: string, outcome: "approved" | "pending" | "rejected", tid: number | null, rejectReason: string | null) => {
+      const { error } = await supabase.rpc("finalize_teacher_decision", {
+        p_id: profileId,
+        outcome,
+        p_tid: tid,
+        p_reject_reason: rejectReason,
+      });
+      if (error) return { ok: false as const, error: error.message };
+      fetchTeacherProfiles();
+      return { ok: true as const };
+    },
+    [fetchTeacherProfiles]
+  );
+
+  const updateTeacherProfile = useCallback(
+    async (profileId: string, payload: Partial<TeacherProfile>) => {
+      // Camel → snake for the JSONB payload the RPC expects. Only whitelisted
+      // columns reach the UPDATE — the RPC silently drops status/tid/approval.
+      const rpcPayload: Record<string, unknown> = {};
+      if (payload.firstName !== undefined) rpcPayload.first_name = payload.firstName;
+      if (payload.lastName !== undefined) rpcPayload.last_name = payload.lastName;
+      if (payload.email !== undefined) rpcPayload.email = payload.email;
+      if (payload.phoneNumber !== undefined) rpcPayload.phone_number = payload.phoneNumber;
+      if (payload.cvLink !== undefined) rpcPayload.cv_link = payload.cvLink;
+      if (payload.qualification !== undefined) rpcPayload.qualification = payload.qualification;
+      if (payload.subjectsInterested !== undefined) rpcPayload.subjects_interested = payload.subjectsInterested;
+      if (payload.teachingMatrix !== undefined) rpcPayload.teaching_matrix = payload.teachingMatrix;
+      if (payload.interviewNotes !== undefined) rpcPayload.interview_notes = payload.interviewNotes;
+      if (payload.interviewRubric !== undefined) rpcPayload.interview_rubric = payload.interviewRubric;
+      if (payload.tier !== undefined) rpcPayload.tier = payload.tier;
+      const { error } = await supabase.rpc("update_teacher_profile", { p_id: profileId, payload: rpcPayload });
+      if (error) return { ok: false as const, error: error.message };
+      fetchTeacherProfiles();
+      return { ok: true as const };
+    },
+    [fetchTeacherProfiles]
+  );
+
+  const processHrRecording = useCallback(
+    async (profileId: string) => {
+      const { data: { session } } = await supabase.auth.getSession();
+      const token = session?.access_token;
+      if (!token) return { ok: false as const, error: "Not authenticated" };
+      try {
+        const res = await fetch(`${AI_BACKEND_URL}/api/v1/hr-interviews/${profileId}/process-recording`, {
+          method: "POST",
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (!res.ok) {
+          const body = await res.json().catch(() => ({}));
+          return { ok: false as const, error: body.detail ?? `HTTP ${res.status}` };
+        }
+        return { ok: true as const };
+      } catch (e) {
+        return { ok: false as const, error: e instanceof Error ? e.message : "Network error" };
+      }
+    },
+    []
+  );
 
   // ─── Realtime: demo_drafts ────────────────────────────────────
   useEffect(() => {
@@ -904,6 +1074,16 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     return m;
   }, [drafts]);
 
+  // Visible-to-analyst teacher list — used by /analyst dropdown and /teachers grid
+  // once Phase 8 swaps consumers off the hardcoded TEACHERS array in lib/types.ts.
+  const approvedTeachers = useMemo(
+    () =>
+      teacherProfiles
+        .filter((p) => p.status === "approved")
+        .sort((a, b) => (a.lastName || "").localeCompare(b.lastName || "")),
+    [teacherProfiles]
+  );
+
   return (
     <StoreContext.Provider
       value={{
@@ -936,6 +1116,13 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         approvedSessions,
         teacherSessions,
         sessionTeachers,
+        teacherProfiles,
+        approvedTeachers,
+        createTeacherCandidate,
+        submitInterview,
+        finalizeTeacherDecision,
+        updateTeacherProfile,
+        processHrRecording,
         stats,
       }}
     >

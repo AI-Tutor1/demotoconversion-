@@ -400,6 +400,15 @@ Approved-sessions feed for a teacher profile (and, later, a student profile). Re
 - Approval bar shows acceptance percentage
 - Layout: `.session-scorecard-grid` (responsive, 1-col on mobile)
 
+### ScoreScale (`components/hr-interview-drawer.tsx` → `ScoreScale`)
+Compact 1–N button scale for scoring rubric questions inline inside drawers and narrow cards. **Fixed-size buttons only** (≈34×30 px) — never `flex: 1`, or the row stretches to container width and becomes the "giant rectangles" bug (see `memory/feedback_drawer_button_flex_overflow.md`). Click the currently-selected button to clear (matches `Stars` / POUR tag toggle pattern). Anchor labels (`lowLabel` ↔ `highLabel`) render as a 10px row BELOW the scale — optional.
+
+### Collapsible Note field (`components/hr-interview-drawer.tsx` → `RubricQuestion` note branch)
+Secondary-input pattern for rubric questions. Default-collapsed behind a `+ Add note` text button in Apple Blue. Auto-opens when existing content is present on mount OR when a question's `requireNoteWhen(value)` predicate fires (e.g. red flags = Yes). Required state: red 1px border + micro-label "Required" in `#B71C1C`. Two rows default (`<textarea rows={2}>`). Use this whenever a score/choice needs optional context but you don't want the form to feel heavy by default.
+
+### Structured rubric card (`components/hr-interview-drawer.tsx` → `RubricQuestion`)
+Inline header-row layout for rubric-style forms: label on the left, answer control (ScoreScale / yes-no pills / select / textarea) on the right of the same row. Card bg `LIGHT_GRAY`, border `#e8e8ed`, radius `10px`, padding `10px 12px`. Matches the read-only scorecard-report Q-card treatment so write + read modes are visually sibling. Questions are grouped into categories; the category header uses `.section-label` (never inline styling).
+
 ### CSS Classes — Product Review
 | Class | Usage |
 |-------|-------|
@@ -411,6 +420,180 @@ Approved-sessions feed for a teacher profile (and, later, a student profile). Re
 | `.session-scorecard-grid` | Responsive grid for scorecard questions (1-col on mobile) |
 | `.filter-select-dark` | Dark-themed filter trigger (for hero bars with dark bg) |
 | `.filter-select-light` | Light-themed filter trigger (for content sections) |
+
+## Layout Templates
+
+Copy-paste starting points for new surfaces. Every page, drawer, and tab strip in this codebase follows one of these. If you deviate, you're introducing a new pattern — expect scrutiny.
+
+### 1. Page template (hero + content)
+
+Every page is `"use client"` at the top. Hero on `LIGHT_GRAY`, content on `#fff`, `paddingTop: 92` to clear the sticky nav. Canonical: [app/hr/page.tsx](app/hr/page.tsx), [app/enrollments/page.tsx](app/enrollments/page.tsx).
+
+```tsx
+"use client";
+import { useMemo, useState } from "react";
+import { useStore } from "@/lib/store";
+import { BLUE, LIGHT_GRAY, MUTED } from "@/lib/types";
+
+export default function MyPage() {
+  const { /* state from store */ } = useStore();
+  return (
+    <>
+      <section style={{ background: LIGHT_GRAY, paddingTop: 92, paddingBottom: 40 }}>
+        <div className="animate-fade-up" style={{ maxWidth: 1200, margin: "0 auto", padding: "0 24px" }}>
+          <p className="section-label">Category</p>
+          <h1 style={{ fontSize: 40, fontWeight: 600, lineHeight: 1.1 }}>Page title.</h1>
+          <p style={{ color: MUTED, marginTop: 8, fontSize: 15 }}>Short subtitle.</p>
+        </div>
+      </section>
+      <section style={{ background: "#fff", padding: "40px 24px 80px" }}>
+        <div style={{ maxWidth: 1200, margin: "0 auto" }}>
+          {/* content */}
+        </div>
+      </section>
+    </>
+  );
+}
+```
+
+- `max-width: 1100` for single-flow content pages, `1200` for list pages with filter panels.
+- Never render `<Nav />` — it lives in `app/layout.tsx`.
+- Every page body uses `animate-fade-up` on the hero content wrapper.
+
+### 2. Drawer / side-panel template
+
+Role-safe, full-height, 720px max. Overlay click closes. Canonical: [components/hr-interview-drawer.tsx](components/hr-interview-drawer.tsx), [components/hr-candidate-form.tsx](components/hr-candidate-form.tsx), [components/accountability-drawer.tsx](components/accountability-drawer.tsx).
+
+```tsx
+<div role="dialog" aria-modal="true" style={{ position: "fixed", inset: 0, zIndex: 100 }}>
+  <div onClick={onClose} style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,0.35)" }} />
+  <div
+    className="animate-slide-in"
+    style={{
+      position: "absolute", right: 0, top: 0, bottom: 0,
+      width: "100%", maxWidth: 720, background: "#fff",
+      boxShadow: "-8px 0 28px rgba(0,0,0,0.12)",
+      display: "flex", flexDirection: "column",
+    }}
+  >
+    {/* Sticky header with optional tabs */}
+    <div style={{ padding: "18px 24px", borderBottom: "1px solid #f0f0f0" }}>
+      {/* title row + close × button */}
+    </div>
+    {/* Scrollable body */}
+    <div style={{ flex: 1, overflowY: "auto", padding: "20px 24px" }}>
+      {/* body */}
+    </div>
+    {/* Sticky footer — optional */}
+    <div style={{ padding: 16, borderTop: "1px solid #f0f0f0", display: "flex", gap: 8, justifyContent: "flex-end" }}>
+      <button onClick={onClose} className="pill pill-outline">Cancel</button>
+      <button onClick={submit} className="pill pill-blue">Save</button>
+    </div>
+  </div>
+</div>
+```
+
+- `maxWidth: 720` is the standing convention. Wider drawers feel out of place; narrower (520) is fine for single-column forms (see `HrCandidateForm`).
+- Close affordances: (a) overlay click, (b) `×` button in header, (c) `onSuccess`/save path. NOT ESC — no keyboard shortcut is wired globally.
+- If the drawer has tabs, put them inside the header's bottom area with `marginBottom: -1` and `borderBottom: "2px solid transparent"` — see the Tabs template below.
+
+### 3. Tabs template
+
+Used in drawers AND in page headers. Blue-underline active state; muted secondary labels; optional chip counts. Canonical: [app/hr/page.tsx](app/hr/page.tsx) (tabs with counts), [components/hr-interview-drawer.tsx](components/hr-interview-drawer.tsx) (tabs inside drawer header), [app/teachers/[id]/page.tsx](app/teachers/[id]/page.tsx) (tabs on a page hero).
+
+```tsx
+const TABS: { key: string; label: string }[] = [
+  { key: "a", label: "First" },
+  { key: "b", label: "Second" },
+];
+
+<div style={{ display: "flex", gap: 4, borderBottom: "1px solid #f0f0f0", marginBottom: -1 }}>
+  {TABS.map((t) => {
+    const active = t.key === tab;
+    return (
+      <button
+        key={t.key}
+        onClick={() => setTab(t.key)}
+        style={{
+          padding: "10px 16px",
+          border: "none",
+          background: "none",
+          borderBottom: active ? `2px solid ${BLUE}` : "2px solid transparent",
+          color: active ? BLUE : MUTED,
+          fontSize: 14,
+          fontWeight: active ? 600 : 500,
+          cursor: "pointer",
+          marginBottom: -1,
+        }}
+      >
+        {t.label}
+        {/* Optional count chip: */}
+        {/* <span style={{ marginLeft: 8, fontSize: 11, background: active ? BLUE : "#e5e5e5",
+              color: active ? "#fff" : MUTED, padding: "1px 8px", borderRadius: 980 }}>{count}</span> */}
+      </button>
+    );
+  })}
+</div>
+```
+
+- Tab row uses `marginBottom: -1` so its `borderBottom` sits on the parent's `borderBottom: 1px solid #f0f0f0`, producing a clean single hairline.
+- `padding: 10px 16px` in pages, `padding: 8px 12px` in drawers (tighter).
+- Never animate the underline — it's a `border-bottom` swap, not a transform.
+
+### 4. List row + drawer-on-click (list page pattern)
+
+Filter panel on top → `div` of rows (NOT a table) → row click opens detail drawer. Canonical: [app/hr/page.tsx](app/hr/page.tsx). The CSS-grid header/row alignment pattern:
+
+```tsx
+const COLS = "1fr 140px 180px 140px 80px";
+
+{/* Header row */}
+<div style={{
+  display: "grid", gridTemplateColumns: COLS, gap: 8, padding: "10px 16px",
+  background: "#fafafa", fontSize: 11, fontWeight: 600, color: MUTED,
+  textTransform: "uppercase", letterSpacing: "0.04em",
+}}>
+  <div>Name</div><div>HR#</div><div>Phone</div><div>Status</div><div>Tutor ID</div>
+</div>
+
+{/* Data rows — use <button> for keyboard + focus ring */}
+{rows.map((r) => (
+  <button
+    key={r.id}
+    onClick={() => openDrawer(r)}
+    style={{
+      display: "grid", gridTemplateColumns: COLS, gap: 8,
+      width: "100%", padding: "12px 16px",
+      background: "#fff", border: "none", borderTop: "1px solid #f5f5f7",
+      textAlign: "left", cursor: "pointer", fontSize: 13,
+    }}
+    onMouseEnter={(e) => { e.currentTarget.style.background = "#fafafa"; }}
+    onMouseLeave={(e) => { e.currentTarget.style.background = "#fff"; }}
+  >
+    {/* row cells — one <div> per column */}
+  </button>
+))}
+```
+
+- Always `<button>` for rows (not `<div onClick>`) — gets keyboard activation + accessible name for free.
+- Column widths: `1fr` for the primary field (usually name), fixed pixel widths for the rest.
+
+### 5. Shared form controls (do not re-invent)
+
+When building any new interactive form or drawer:
+
+| Control | Canonical source | DESIGN.md section |
+|---|---|---|
+| Field wrapper (label + input + error) | `components/ui.tsx` → `Field` | Component Patterns |
+| Text input / select / textarea | `.apple-input`, `.apple-select`, `.apple-textarea` | Typography + CSS classes above |
+| Searchable dropdown | `components/searchable-select.tsx` | Component Patterns → SearchableSelect |
+| Rating (1–5 stars) | `components/ui.tsx` → `Stars` | Component Patterns → Star Rating |
+| Score scale (numeric, 1–N) | `components/hr-interview-drawer.tsx` → `ScoreScale` | ScoreScale above |
+| Yes/No + clear | `components/hr-interview-drawer.tsx` → yes/no pills in `RubricQuestion` | (same file) |
+| Collapsible secondary note | `components/hr-interview-drawer.tsx` → note branch in `RubricQuestion` | Collapsible Note field above |
+| Primary / secondary button | `.pill .pill-blue`, `.pill .pill-outline` | (CSS classes section) |
+
+If a new control doesn't exist here, propose it in DESIGN.md *before* implementing, not after. Three sibling controls in a PR without a prior discussion is a yellow flag.
 
 ## Anti-Patterns — Do NOT
 
@@ -424,3 +607,5 @@ Approved-sessions feed for a teacher profile (and, later, a student profile). Re
 - Do NOT put borders on both sides of a separator — use bottom-border only
 - Do NOT center-align body text — left-align everything except hero titles and KPI numbers
 - Do NOT use ALL CAPS except in `.section-label` elements
+- Do NOT use `flex: 1` on score-scale or pill-toggle buttons inside side drawers or narrow cards. Fixed sizes only (≈34×30 for score, ≈52 min-width for yes/no pills). See ScoreScale section above + `memory/feedback_drawer_button_flex_overflow.md`.
+- Do NOT ship raw AI/JSON output in a surface that a user will see. Always render through the shared rubric helpers (`Q_KEYS`, `Q_META`, `scoreColor`, `interpretationBadge` from `lib/scorecard.ts`). Raw `<pre>{JSON.stringify(draft)}</pre>` is an acceptable debug affordance only behind a `<details>` in internal-only tabs.

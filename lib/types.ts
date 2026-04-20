@@ -143,6 +143,193 @@ export interface Teacher {
   uid: number;
 }
 
+// ─── HR / TEACHER ONBOARDING ───
+// Status lifecycle: candidate → interview_scheduled → (pending | approved | rejected | archived).
+// Only 'approved' rows are visible to analyst/sales_agent (RLS-enforced; see
+// supabase/migrations/20260421000104_teacher_profiles_rls.sql).
+export type TeacherProfileStatus =
+  | "candidate"
+  | "interview_scheduled"
+  | "pending"
+  | "approved"
+  | "rejected"
+  | "archived";
+
+export interface TeachingMatrixEntry {
+  level: string;
+  subject: string;
+  curriculum: string;
+  grade?: string;
+}
+
+export interface TeacherProfile {
+  id: string;                          // UUID
+  hrApplicationNumber: string;
+  phoneNumber: string;
+  email: string | null;
+  firstName: string;
+  lastName: string;
+  cvLink: string | null;
+  qualification: string | null;
+  subjectsInterested: string[];
+  teachingMatrix: TeachingMatrixEntry[];
+  interviewRecordingLink: string | null;
+  interviewNotes: string | null;       // legacy free-text (kept for backward compat)
+  interviewRubric: InterviewRubric;    // structured HR answers keyed by question_key
+  status: TeacherProfileStatus;
+  tid: number | null;                  // Teacher User Number; NULL until approved
+  approvedAt: string | null;
+  approvedBy: string | null;
+  rejectedAt: string | null;
+  rejectedBy: string | null;
+  rejectReason: string | null;
+  tier: string | null;
+  createdBy: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+// ─── HR interview rubric (structured interviewer form) ────────────────
+// Each answer carries a `value` (type depends on question) + optional `note`.
+// Stored as JSONB on teacher_profiles.interview_rubric, keyed by question_key
+// (so the catalog can be extended without a migration).
+export type RubricAnswerValue = number | string | boolean | null;
+
+export interface RubricAnswer {
+  value: RubricAnswerValue;
+  note: string;
+}
+
+export type InterviewRubric = Record<string, RubricAnswer>;
+
+export type HrQuestionType = "score" | "yesno" | "choice" | "text";
+
+export interface HrInterviewQuestion {
+  key: string;            // stable identifier — the JSONB key
+  label: string;
+  category: string;
+  type: HrQuestionType;
+  hint?: string;
+  // For 'score' questions — 1..max scale. Labels at each end help the scorer.
+  scoreMax?: number;
+  lowLabel?: string;
+  highLabel?: string;
+  // For 'choice' questions — enum-style options.
+  choices?: { value: string; label: string }[];
+  // If true, a note is required when the answer is present (e.g. red flags).
+  requireNoteWhen?: (v: RubricAnswerValue) => boolean;
+}
+
+export const HR_INTERVIEW_QUESTIONS: readonly HrInterviewQuestion[] = [
+  // ─── Behaviour & professionalism ──────────────────
+  { key: "b_punctuality",      category: "Behaviour & professionalism", label: "Punctuality & preparedness",            type: "score", scoreMax: 5, lowLabel: "Late / unprepared", highLabel: "On time, ready" },
+  { key: "b_demeanor",         category: "Behaviour & professionalism", label: "Professional demeanor",                 type: "score", scoreMax: 5, lowLabel: "Unprofessional",   highLabel: "Highly professional" },
+  { key: "b_responsiveness",   category: "Behaviour & professionalism", label: "Responsiveness to feedback",            type: "score", scoreMax: 5, lowLabel: "Defensive",         highLabel: "Open, reflective" },
+  { key: "b_red_flags",        category: "Behaviour & professionalism", label: "Red flags observed?",                   type: "yesno", hint: "If yes, the note is required", requireNoteWhen: (v) => v === true },
+
+  // ─── Language competency ──────────────────────────
+  { key: "l_english_fluency",  category: "Language competency",          label: "English fluency",                       type: "score", scoreMax: 5, lowLabel: "Poor",             highLabel: "Native-like" },
+  { key: "l_articulation",     category: "Language competency",          label: "Clarity of articulation",               type: "score", scoreMax: 5, lowLabel: "Mumbled / unclear", highLabel: "Crisp, deliberate" },
+  { key: "l_grammar",          category: "Language competency",          label: "Grammar & vocabulary",                  type: "score", scoreMax: 5, lowLabel: "Frequent errors",  highLabel: "Precise, varied" },
+
+  // ─── Subject & teaching ───────────────────────────
+  { key: "s_subject_depth",    category: "Subject & teaching",           label: "Subject mastery — depth",               type: "score", scoreMax: 5, lowLabel: "Surface-level",    highLabel: "Expert" },
+  { key: "s_methodology",      category: "Subject & teaching",           label: "Teaching methodology clarity",          type: "score", scoreMax: 5, lowLabel: "No clear method",  highLabel: "Structured, intentional" },
+  { key: "s_simplify",         category: "Subject & teaching",           label: "Ability to simplify complex concepts",  type: "score", scoreMax: 5, lowLabel: "Over-complicates",  highLabel: "Crystal clear" },
+  { key: "s_experience",       category: "Subject & teaching",           label: "Prior teaching experience",             type: "text",  hint: "Describe years, boards, setting" },
+
+  // ─── Setup & logistics ────────────────────────────
+  { key: "t_av_quality",       category: "Setup & logistics",            label: "Audio/video quality adequate?",         type: "yesno" },
+  { key: "t_internet_stable",  category: "Setup & logistics",            label: "Internet stability demonstrated?",      type: "yesno" },
+  { key: "t_availability_fit", category: "Setup & logistics",            label: "Availability matches platform needs?",  type: "yesno" },
+
+  // ─── Overall ───────────────────────────────────────
+  { key: "o_hire_recommendation", category: "Overall",                    label: "Hire recommendation",                   type: "choice",
+    choices: [
+      { value: "strong_no",  label: "Strong no" },
+      { value: "no",         label: "No" },
+      { value: "maybe",      label: "Maybe / hold" },
+      { value: "yes",        label: "Yes" },
+      { value: "strong_yes", label: "Strong yes" },
+    ],
+  },
+  { key: "o_interviewer_notes", category: "Overall",                     label: "Interviewer overall notes",             type: "text", hint: "Impressions, highlights, anything not captured above" },
+] as const;
+
+export const HR_INTERVIEW_CATEGORIES: readonly string[] = Array.from(
+  new Set(HR_INTERVIEW_QUESTIONS.map((q) => q.category))
+);
+
+export type TeacherInterviewDraftStatus =
+  | "pending_review"
+  | "approved"
+  | "partially_edited"
+  | "rejected";
+
+export interface TeacherInterviewDraft {
+  id: string;                          // UUID
+  teacherProfileId: string;
+  transcript: string | null;
+  agentName: string;
+  draftData: DraftData | Record<string, unknown>;  // v1 uses demo DraftData shape
+  status: TeacherInterviewDraftStatus;
+  approvalRate: number | null;
+  reviewedBy: string | null;
+  reviewedAt: string | null;
+  createdAt: string;
+}
+
+export interface TeacherRate {
+  id: string;
+  teacherProfileId: string;
+  curriculum: string;
+  level: string;
+  grade: string;
+  subject: string;
+  ratePerHour: number;
+  currency: string;
+  notes: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface TeacherAvailabilitySlot {
+  id: string;
+  teacherProfileId: string;
+  dayOfWeek: number;      // 0=Mon … 6=Sun
+  startTime: string;      // 'HH:MM:SS'
+  endTime: string;
+  timezone: string;
+  notes: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export const CURRICULA: readonly string[] = [
+  "Cambridge",
+  "Edexcel",
+  "IB",
+  "AQA",
+  "Local",
+] as const;
+
+// Grade options keyed by level. Used by the rate-editor grade dropdown.
+// Levels not in this map fall back to the generic GRADES array.
+export const GRADE_OPTIONS_BY_LEVEL: Record<string, string[]> = {
+  "IGCSE":    ["9", "10"],
+  "O Level":  ["9", "10", "11"],
+  "AS Level": ["AS"],
+  "A Level":  ["AS", "A2"],
+  "A2 Level": ["A2"],
+  "IB":       ["Year 1", "Year 2"],
+  "IB DP":    ["Year 1", "Year 2"],
+  "IB MYP":   ["Year 1", "Year 2", "Year 3", "Year 4", "Year 5"],
+};
+
+export const WEEKDAYS: readonly string[] = [
+  "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday",
+] as const;
+
 // ─── LOOKUPS ───
 // Full production roster (171 tutors). Internal `id` is 1..N, assigned in
 // the CSV's natural order (uid descending). `uid` is the Tuitional user ID
@@ -345,6 +532,10 @@ export const GRADES = [
   "Grade 7", "Grade 8", "Grade 9", "Grade 10", "Grade 11", "Grade 12",
   "Grade 13",
 ];
+
+export const TEACHER_TIERS = [
+  "Tier 01", "Tier 02", "Tier 03", "Tier 04", "Tier 05",
+] as const;
 
 export const ACCT_TYPES = ["Sales", "Product", "Consumer"];
 

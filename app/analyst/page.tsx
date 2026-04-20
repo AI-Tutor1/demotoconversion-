@@ -5,7 +5,8 @@ import { useSearchParams, useRouter } from "next/navigation";
 import { useStore } from "@/lib/store";
 import { Field } from "@/components/ui";
 import { SearchableSelect } from "@/components/searchable-select";
-import { TEACHERS, LEVELS, SUBJECTS, GRADES, LIGHT_GRAY, MUTED } from "@/lib/types";
+import { LEVELS, SUBJECTS, GRADES, LIGHT_GRAY, MUTED } from "@/lib/types";
+import { teacherFullName } from "@/lib/teacher-transforms";
 
 export default function AnalystPage() {
   // useSearchParams() needs a Suspense boundary in Next.js 15 client components.
@@ -18,7 +19,7 @@ export default function AnalystPage() {
 
 function AnalystForm() {
   const router = useRouter();
-  const { createDemo, flash, logActivity, user, salesAgents, demos, triggerProcessRecording } = useStore();
+  const { createDemo, flash, logActivity, user, salesAgents, demos, triggerProcessRecording, approvedTeachers } = useStore();
   // Query-param prefill — used by the "Reject AI draft" flow so the analyst
   // can re-log a session with demo metadata already filled in.
   const params = useSearchParams();
@@ -31,7 +32,9 @@ function AnalystForm() {
   const resolvedTeacher =
     prefillTid ??
     (prefillName
-      ? String(TEACHERS.find((t) => t.name === prefillName)?.uid ?? "")
+      ? String(
+          approvedTeachers.find((t) => teacherFullName(t) === prefillName)?.tid ?? ""
+        )
       : "");
   const blank = {
     date: new Date().toISOString().split("T")[0],
@@ -67,7 +70,10 @@ function AnalystForm() {
     if (!validate()) { flash("Please fix errors above"); return; }
     setSubmitting(true);
 
-    const t = TEACHERS.find((x) => String(x.uid) === f.teacher);
+    const selectedTeacher = approvedTeachers.find((x) => String(x.tid) === f.teacher);
+    const t = selectedTeacher
+      ? { uid: selectedTeacher.tid ?? 0, name: teacherFullName(selectedTeacher) }
+      : null;
     const student = f.student;
     const now = Date.now();
 
@@ -186,10 +192,12 @@ function AnalystForm() {
                 onChange={(v) => u("teacher", v)}
                 placeholder="Select teacher..."
                 clearLabel="Clear selection"
-                options={TEACHERS.map((t) => ({
-                  value: String(t.uid),
-                  label: `${t.name} (ID: ${t.uid})`,
-                }))}
+                options={approvedTeachers
+                  .filter((t) => t.tid != null)
+                  .map((t) => ({
+                    value: String(t.tid),
+                    label: `${teacherFullName(t)} (ID: ${t.tid})`,
+                  }))}
               />
             </Field>
           </div>

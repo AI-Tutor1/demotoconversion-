@@ -4,7 +4,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from .config import settings
-from .routers import demos, ingest, sessions
+from .routers import demos, ingest, recruitment, sessions
 from .scheduler import shutdown_scheduler, start_scheduler
 
 
@@ -45,6 +45,7 @@ app.add_middleware(
 app.include_router(demos.router, prefix="/api/v1/demos", tags=["demos"])
 app.include_router(ingest.router, prefix="/api/v1/demos", tags=["ingest"])
 app.include_router(sessions.router, prefix="/api/v1/sessions", tags=["sessions"])
+app.include_router(recruitment.router, prefix="/api/v1/hr-interviews", tags=["hr-interviews"])
 
 
 @app.get("/health")

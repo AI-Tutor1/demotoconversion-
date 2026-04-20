@@ -12,6 +12,8 @@ const ROLE_GATES: { prefix: string; allowed: string[] }[] = [
   { prefix: "/admin",       allowed: ["manager"] },
   { prefix: "/enrollments", allowed: ["analyst", "manager"] },
   { prefix: "/sessions",    allowed: ["analyst", "manager"] },
+  { prefix: "/hr",          allowed: ["hr", "manager"] },
+  { prefix: "/teachers",    allowed: ["analyst", "manager", "hr"] },
 ];
 
 export async function middleware(req: NextRequest) {

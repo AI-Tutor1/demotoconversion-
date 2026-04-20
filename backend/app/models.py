@@ -262,6 +262,28 @@ class AutoRetryResponse(BaseModel):
     already_running: int = 0  # 1 if a previous tick was still in flight
 
 
+class HrInterviewProcessResponse(BaseModel):
+    """Response from POST /api/v1/hr-interviews/{profile_id}/process-recording.
+
+    Returns 202 immediately while the ingest + analyst chain runs in a
+    FastAPI BackgroundTask. Frontend watches teacher_profiles + hr_interview_drafts
+    realtime subscriptions for progress.
+    """
+
+    teacher_profile_id: str
+    status: str  # "queued"
+
+
+class HrInterviewAnalysisResponse(BaseModel):
+    """Response from POST /api/v1/hr-interviews/{profile_id}/analyze."""
+
+    id: str
+    teacher_profile_id: str
+    agent_name: str
+    status: str
+    created_at: datetime
+
+
 class AuditLinkageResponse(BaseModel):
     """Response from POST /api/v1/sessions/audit-linkage.
 

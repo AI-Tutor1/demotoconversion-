@@ -46,11 +46,12 @@ npm run dev  # starts Next.js on :3000
 
 Sign in at [http://localhost:3000/login](http://localhost:3000/login):
 
-| Email | Role |
-|-------|------|
-| `manager@demo.pk` | Manager — full access |
-| `analyst@demo.pk` | Analyst — own + unassigned demos |
-| `sales@demo.pk` | Sales agent — only assigned demos |
+| Email | Role | Scope |
+|-------|------|-------|
+| `manager@demo.pk` | `manager` | Full access — every page, every mutation |
+| `analyst@demo.pk` | `analyst` | Demos (own + unassigned), enrollments/sessions, teacher profiles (read approved, edit whitelisted fields) |
+| `sales@demo.pk` | `sales_agent` | Only their assigned demos; read-only view of approved teachers |
+| `hr@demo.pk` *(seed after adding via dashboard)* | `hr` | HR workspace (`/hr`) + teacher profiles (all statuses). Cannot see demos, sales, enrollments, sessions |
 
 **⚠️ `20260412112906_seed_initial_users.sql` is gated.** It raises an exception unless called with `app.allow_dev_seed = 'true'` + per-role password session settings. Only `scripts/seed-dev-users.sh` satisfies the gate. The migration file itself contains no passwords.
 
@@ -116,7 +117,13 @@ supabase/migrations/       # SQL migrations (timestamp-prefixed)
 | `/sales` | Sales queue with filters, bulk actions, Step 10 accountability, recording link |
 | `/kanban` | 5-column board driven by `workflow_stage` with drag-drop + confirmation |
 | `/analytics` | Conversion funnel, POUR breakdown, aging, subject demand, agent leaderboard |
-| `/teachers` | Teacher cards with sort + drill-down |
+| `/teachers` | Teacher cards with sort + drill-down (analyst, manager, hr) |
+| `/teachers/[id]` | Teacher profile: tabs for Profile · Rates · Schedule · Demos · Interview (hr/manager only). Edit button goes through whitelisted RPC. |
+| `/hr` | HR workspace — candidate intake, interview + rubric, scorecard, rates, schedule, Approved/Pending/Rejected decision. Role-gated to hr + manager. |
+| `/enrollments` | Product Review: enrollment CSV upload + filters + roster table (analyst, manager) |
+| `/sessions` | Product Review: session CSV upload + AI scorecard queue + status badges (analyst, manager) |
+| `/conducted` | Not-converted demos awaiting analyst accountability finalisation |
+| `/admin/data-quality` | Data-quality issues ledger (manager-only) |
 
 ---
 
@@ -132,12 +139,12 @@ supabase/migrations/       # SQL migrations (timestamp-prefixed)
 │  Data Layer: Supabase (Phase 2, done)   │
 │  Postgres · Auth · Realtime · Storage   │
 ├─────────────────────────────────────────┤
-│  AI Backbone: Python (Phase 3, future)  │
-│  FastAPI · LangGraph · Celery · Redis   │
+│  AI Backbone: Python (Phase 3, live)    │
+│  FastAPI · LangGraph · Groq Whisper     │
 └─────────────────────────────────────────┘
 ```
 
-**Boundary rule:** The Next.js frontend reads and writes data. It does NOT do AI reasoning. A future Python backend (Phase 3) will do AI reasoning and NOT serve HTML. Supabase is the shared data layer both talk to.
+**Boundary rule:** The Next.js frontend reads and writes data. It does NOT do AI reasoning. The Python backend (Phase 3, live at `:8000`) does AI reasoning and does NOT serve HTML. Supabase is the shared data layer both talk to. Inter-layer communication is HTTP with `Authorization: Bearer <supabase-access-token>` + ES256/JWKS verification on the backend.
 
 ### Database Schema (Phase 2 — applied)
 

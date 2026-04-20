@@ -5,7 +5,8 @@ import Link from "next/link";
 import { StatusBadge, EmptyState } from "@/components/ui";
 import { SearchableSelect } from "@/components/searchable-select";
 import AccountabilityDrawer from "@/components/accountability-drawer";
-import { TEACHERS, LEVELS, SUBJECTS, LIGHT_GRAY, MUTED, BLUE, NEAR_BLACK, ACCT_TYPES, acctFinalLabel } from "@/lib/types";
+import { LEVELS, SUBJECTS, LIGHT_GRAY, MUTED, BLUE, NEAR_BLACK, ACCT_TYPES, acctFinalLabel } from "@/lib/types";
+import { teacherFullName } from "@/lib/teacher-transforms";
 import { isFinalized } from "@/lib/scorecard";
 import { ageDays, exportCSV } from "@/lib/utils";
 
@@ -62,7 +63,7 @@ function toOpts(arr: string[]) {
 }
 
 export default function ConductedPage() {
-  const { rangedDemos, draftsByDemoId, salesAgents } = useStore();
+  const { rangedDemos, draftsByDemoId, salesAgents, approvedTeachers } = useStore();
 
   // Primary filters (LIGHT_GRAY hero)
   const [fStatus, setFStatus]   = useState("all");
@@ -262,7 +263,7 @@ export default function ConductedPage() {
             onChange={setFTeacher}
             placeholder="Teacher"
             clearLabel="All teachers"
-            options={Array.from(new Set(TEACHERS.map((t) => t.name))).map((n) => ({ value: n, label: n }))}
+            options={Array.from(new Set(approvedTeachers.map(teacherFullName))).map((n) => ({ value: n, label: n }))}
           />
           <SearchableSelect
             variant="light"

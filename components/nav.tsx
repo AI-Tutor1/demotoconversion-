@@ -8,7 +8,9 @@ import { supabase } from "@/lib/supabase";
 import { MUTED } from "@/lib/types";
 import { exportCSV } from "@/lib/utils";
 
-const NAV_ITEMS: { label: string; href: string; roles?: ("analyst" | "sales_agent" | "manager")[] }[] = [
+type NavRole = "analyst" | "sales_agent" | "manager" | "hr";
+
+const NAV_ITEMS: { label: string; href: string; roles?: NavRole[] }[] = [
   { label: "Dashboard", href: "/" },
   { label: "Analyst",   href: "/analyst",   roles: ["analyst", "manager"] },
   { label: "Drafts",    href: "/drafts",    roles: ["analyst", "manager"] },
@@ -16,7 +18,8 @@ const NAV_ITEMS: { label: string; href: string; roles?: ("analyst" | "sales_agen
   { label: "Conducted",  href: "/conducted" },
   { label: "Kanban",    href: "/kanban" },
   { label: "Analytics", href: "/analytics" },
-  { label: "Teachers",  href: "/teachers" },
+  { label: "Teachers",  href: "/teachers",  roles: ["analyst", "manager", "hr"] },
+  { label: "HR",          href: "/hr",          roles: ["hr", "manager"] },
   { label: "Enrollments", href: "/enrollments", roles: ["analyst", "manager"] },
   { label: "Sessions",    href: "/sessions",    roles: ["analyst", "manager"] },
   { label: "Data quality", href: "/admin/data-quality", roles: ["manager"] },
