@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import React, { useMemo, useState } from "react";
 import { useStore } from "@/lib/store";
 import { BLUE, CURRICULA, GRADES, LEVELS, LIGHT_GRAY, MUTED, SUBJECTS, TEACHER_TIERS, type TeacherProfile, type TeacherProfileStatus } from "@/lib/types";
 import { teacherFullName } from "@/lib/teacher-transforms";
@@ -38,6 +38,16 @@ export default function HrPage() {
   const [fCurriculum, setFCurriculum] = useState("");
   const [fGrade, setFGrade] = useState("");
   const [fTier, setFTier] = useState("");
+
+  const [showFilters, setShowFilters] = useState(false);
+
+  const hasFilters = !!(fTier || fSubject || fCurriculum || fLevel || fGrade);
+
+  const FILTER_LABEL: React.CSSProperties = {
+    fontSize: 11, fontWeight: 600, color: MUTED,
+    textTransform: "uppercase", letterSpacing: "0.04em",
+    marginBottom: 4, display: "block",
+  };
 
   const canAccess = user?.role === "hr" || user?.role === "manager";
 
@@ -140,44 +150,122 @@ export default function HrPage() {
             </button>
           </div>
 
-          {/* Search + filters */}
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 24, alignItems: "center" }}>
+          {/* Toolbar */}
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 12, marginBottom: showFilters ? 12 : 24, alignItems: "center" }}>
+            <button
+              type="button"
+              onClick={() => setShowFilters((v) => !v)}
+              aria-expanded={showFilters}
+              aria-controls="hr-filter-panel"
+              style={{
+                display: "inline-flex", alignItems: "center", gap: 6,
+                padding: "8px 14px",
+                background: showFilters ? BLUE : "transparent",
+                color: showFilters ? "#fff" : BLUE,
+                border: `1px solid ${BLUE}`,
+                borderRadius: 10, fontSize: 14, fontWeight: 500,
+                cursor: "pointer", transition: "background 0.15s, color 0.15s", flexShrink: 0,
+              }}
+            >
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <line x1="4" y1="6" x2="20" y2="6" />
+                <line x1="4" y1="12" x2="20" y2="12" />
+                <line x1="4" y1="18" x2="20" y2="18" />
+                <circle cx="9"  cy="6"  r="2.5" fill="currentColor" stroke="none" />
+                <circle cx="15" cy="12" r="2.5" fill="currentColor" stroke="none" />
+                <circle cx="9"  cy="18" r="2.5" fill="currentColor" stroke="none" />
+              </svg>
+              Filters
+              {hasFilters && (
+                <span style={{
+                  display: "inline-flex", alignItems: "center", justifyContent: "center",
+                  width: 16, height: 16, borderRadius: "50%",
+                  background: showFilters ? "rgba(255,255,255,0.35)" : BLUE,
+                  color: "#fff", fontSize: 10, fontWeight: 700,
+                }}>•</span>
+              )}
+            </button>
+
             <input
               className="apple-input"
               placeholder="Search by name, HR#, phone, email, tutor ID…"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              style={{ width: 340 }}
+              style={{ maxWidth: 340, fontSize: 14 }}
             />
-            <select className="apple-select" value={fTier} onChange={(e) => setFTier(e.target.value)} style={{ width: 130 }}>
-              <option value="">All tiers</option>
-              {TEACHER_TIERS.map((t) => <option key={t} value={t}>{t}</option>)}
-            </select>
-            <select className="apple-select" value={fSubject} onChange={(e) => setFSubject(e.target.value)} style={{ width: 160 }}>
-              <option value="">All subjects</option>
-              {SUBJECTS.map((s) => <option key={s} value={s}>{s}</option>)}
-            </select>
-            <select className="apple-select" value={fCurriculum} onChange={(e) => setFCurriculum(e.target.value)} style={{ width: 140 }}>
-              <option value="">All curricula</option>
-              {CURRICULA.map((c) => <option key={c} value={c}>{c}</option>)}
-            </select>
-            <select className="apple-select" value={fLevel} onChange={(e) => setFLevel(e.target.value)} style={{ width: 140 }}>
-              <option value="">All levels</option>
-              {LEVELS.map((l) => <option key={l} value={l}>{l}</option>)}
-            </select>
-            <select className="apple-select" value={fGrade} onChange={(e) => setFGrade(e.target.value)} style={{ width: 130 }}>
-              <option value="">All grades</option>
-              {GRADES.map((g) => <option key={g} value={g}>{g}</option>)}
-            </select>
-            {(fTier || fSubject || fCurriculum || fLevel || fGrade) && (
-              <button
-                onClick={() => { setFTier(""); setFSubject(""); setFCurriculum(""); setFLevel(""); setFGrade(""); }}
-                style={{ background: "none", border: "none", color: MUTED, fontSize: 13, cursor: "pointer", textDecoration: "underline" }}
-              >
-                Clear filters
-              </button>
-            )}
+
+            <span style={{ color: MUTED, fontSize: 13, marginLeft: "auto" }}>
+              {filtered.length} candidate{filtered.length !== 1 ? "s" : ""}
+            </span>
           </div>
+
+          {showFilters && (
+            <div
+              id="hr-filter-panel"
+              className="animate-fade-up"
+              style={{
+                marginBottom: 24, padding: 16, background: LIGHT_GRAY, borderRadius: 14,
+                display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))",
+                gap: 12, alignItems: "end",
+              }}
+            >
+              <div style={{ display: "flex", flexDirection: "column" }}>
+                <label style={FILTER_LABEL}>Tier</label>
+                <select className="apple-select" value={fTier} onChange={(e) => setFTier(e.target.value)} style={{ width: "100%" }}>
+                  <option value="">All tiers</option>
+                  {TEACHER_TIERS.map((t) => <option key={t} value={t}>{t}</option>)}
+                </select>
+              </div>
+
+              <div style={{ display: "flex", flexDirection: "column" }}>
+                <label style={FILTER_LABEL}>Subject</label>
+                <select className="apple-select" value={fSubject} onChange={(e) => setFSubject(e.target.value)} style={{ width: "100%" }}>
+                  <option value="">All subjects</option>
+                  {SUBJECTS.map((s) => <option key={s} value={s}>{s}</option>)}
+                </select>
+              </div>
+
+              <div style={{ display: "flex", flexDirection: "column" }}>
+                <label style={FILTER_LABEL}>Curriculum</label>
+                <select className="apple-select" value={fCurriculum} onChange={(e) => setFCurriculum(e.target.value)} style={{ width: "100%" }}>
+                  <option value="">All curricula</option>
+                  {CURRICULA.map((c) => <option key={c} value={c}>{c}</option>)}
+                </select>
+              </div>
+
+              <div style={{ display: "flex", flexDirection: "column" }}>
+                <label style={FILTER_LABEL}>Level</label>
+                <select className="apple-select" value={fLevel} onChange={(e) => setFLevel(e.target.value)} style={{ width: "100%" }}>
+                  <option value="">All levels</option>
+                  {LEVELS.map((l) => <option key={l} value={l}>{l}</option>)}
+                </select>
+              </div>
+
+              <div style={{ display: "flex", flexDirection: "column" }}>
+                <label style={FILTER_LABEL}>Grade</label>
+                <select className="apple-select" value={fGrade} onChange={(e) => setFGrade(e.target.value)} style={{ width: "100%" }}>
+                  <option value="">All grades</option>
+                  {GRADES.map((g) => <option key={g} value={g}>{g}</option>)}
+                </select>
+              </div>
+
+              {hasFilters && (
+                <div style={{ display: "flex", alignItems: "flex-end" }}>
+                  <button
+                    type="button"
+                    onClick={() => { setFTier(""); setFSubject(""); setFCurriculum(""); setFLevel(""); setFGrade(""); }}
+                    style={{
+                      background: "transparent", color: BLUE, border: `1px solid ${BLUE}`,
+                      padding: "10px 16px", borderRadius: 10, fontSize: 13, fontWeight: 500,
+                      cursor: "pointer", whiteSpace: "nowrap", width: "100%",
+                    }}
+                  >
+                    Clear filters
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Rows */}
           {filtered.length === 0 ? (
