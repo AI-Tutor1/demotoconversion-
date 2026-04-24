@@ -2,6 +2,7 @@
 
 import { useEffect, useState, use } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useStore } from "@/lib/store";
 import DraftReview from "@/components/draft-review";
 import { ScorecardReport } from "@/components/scorecard-report";
@@ -17,7 +18,8 @@ export default function AnalystReviewPage({
 }) {
   const { id } = use(params);
   const demoId = Number(id);
-  const { demos, draftsByDemoId, fetchDraft, triggerAnalyze, triggerProcessRecording, flash, user } = useStore();
+  const { demos, draftsByDemoId, fetchDraft, triggerAnalyze, triggerProcessRecording, flash, user, setDemos, setConfirm, logActivity } = useStore();
+  const router = useRouter();
   const [draft, setDraft] = useState<DemoDraft | null>(
     () => draftsByDemoId[demoId] ?? null
   );
@@ -96,6 +98,22 @@ export default function AnalystReviewPage({
     });
   };
 
+  const canDelete = user?.role === "manager";
+
+  const handleDelete = () => {
+    if (!demo) return;
+    setConfirm({
+      title: `Delete demo for ${demo.student}?`,
+      msg: "This permanently removes the demo, its POUR issues, AI scorecard draft, accountability record, and any pending processing tasks. This cannot be undone.",
+      onConfirm: () => {
+        setDemos((prev) => prev.filter((d) => d.id !== demoId));
+        logActivity("deleted", `Demo ${demoId} · ${demo.student}`);
+        flash("Demo deleted");
+        router.push("/");
+      },
+    });
+  };
+
   if (!demo) {
     return (
       <main style={{ background: LIGHT_GRAY, minHeight: "100vh", paddingTop: 92 }}>
@@ -128,12 +146,24 @@ export default function AnalystReviewPage({
     <>
       <section style={{ background: LIGHT_GRAY, paddingTop: 92, paddingBottom: 24 }}>
         <div style={{ maxWidth: 1300, margin: "0 auto", padding: "0 24px" }}>
-          <Link
-            href="/"
-            style={{ fontSize: 13, color: BLUE, textDecoration: "none" }}
-          >
-            ← Back to dashboard
-          </Link>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <Link
+              href="/"
+              style={{ fontSize: 13, color: BLUE, textDecoration: "none" }}
+            >
+              ← Back to dashboard
+            </Link>
+            {canDelete && (
+              <button
+                type="button"
+                onClick={handleDelete}
+                className="pill pill-outline"
+                style={{ fontSize: 12, padding: "5px 14px", color: "#B42318", borderColor: "#FDA29B" }}
+              >
+                Delete demo
+              </button>
+            )}
+          </div>
           <p className="section-label" style={{ marginTop: 12 }}>
             Demo {demoId} · {finalized ? "QA scorecard report" : "AI-assisted review"}
           </p>

@@ -191,6 +191,9 @@ The sales agent can override the suggestion.
 ### Step 11: Teacher Review Sheet
 All demos for a teacher are aggregated into a performance profile: conversion rate, average rating, POUR frequency by category, and a coaching report with specific improvement actions.
 
+### Demo deletion (manager-only)
+Managers may hard-delete any demo from its detail page (`/analyst/{id}` → "Delete demo"). Deletion cascades at the DB level to `pour_issues`, `demo_drafts`, `demo_accountability`, and `task_queue` rows via `ON DELETE CASCADE`. Analysts and sales agents cannot delete — the client button is hidden and RLS blocks the DELETE. There is no soft-delete / archive / undo; the action is permanent and logged to the activity feed. Use cases: junk entries, duplicate ingests, test data, and PII-contaminated records.
+
 ## Multi-User Assignment Rules
 
 ### Analysts
