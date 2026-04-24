@@ -409,6 +409,27 @@ Secondary-input pattern for rubric questions. Default-collapsed behind a `+ Add 
 ### Structured rubric card (`components/hr-interview-drawer.tsx` → `RubricQuestion`)
 Inline header-row layout for rubric-style forms: label on the left, answer control (ScoreScale / yes-no pills / select / textarea) on the right of the same row. Card bg `LIGHT_GRAY`, border `#e8e8ed`, radius `10px`, padding `10px 12px`. Matches the read-only scorecard-report Q-card treatment so write + read modes are visually sibling. Questions are grouped into categories; the category header uses `.section-label` (never inline styling).
 
+### Destructive action button (delete)
+Red-on-white pill for manager-only hard-delete across all surfaces. Never a solid red button (too dominant for a destructive action next to primary buttons); always `pill pill-outline` with a red text + soft red border. Two sizes only:
+
+| Where | `fontSize` | `padding` | Label |
+|-------|-----------|-----------|-------|
+| Detail-page headers (`/analyst/{id}`, `/sessions/{id}`, `/sales` detail panel) | `12` | `5px 14px` | "Delete demo" / "Delete session" |
+| Inline list rows (dashboard, `/conducted`, `/drafts`, `/sessions`, `/sales` queue card) | `11` (`10` for the densest cards) | `3px 10px` (`2px 8px` dense) | "Delete" |
+
+Colors (fixed — do not substitute tokens):
+- `color: "#B42318"` — red text
+- `borderColor: "#FDA29B"` — soft red border
+- Background inherits from `.pill .pill-outline` (white).
+
+Behaviour contract:
+- Gated on `user?.role === "manager"` at every call site. Helper trusts the caller.
+- Click opens the confirm modal (via `confirmDeleteDemo` / `confirmDeleteSession` from `useStore()`); never wires to `supabase.from(...).delete()` inline.
+- In any row/card that already has a click handler (drawer-open, selection-set), the button's `onClick` MUST `e.stopPropagation()`. Reuse the cell's existing stopPropagation if it has one — don't double-wrap.
+- When inside a `<Link>` wrapper (e.g. `/drafts`), put the button *outside* the Link via a flex container (`<div><Link flex:1/><button/></div>`), not inside it. Inside-link buttons bubble click to the Link no matter what.
+
+Canonical sources: [app/analyst/[id]/page.tsx:156-165](app/analyst/[id]/page.tsx#L156-L165) for the detail-page size; [app/conducted/page.tsx](app/conducted/page.tsx) "View →" cell for the inline-list size.
+
 ### CSS Classes — Product Review
 | Class | Usage |
 |-------|-------|

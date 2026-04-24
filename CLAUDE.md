@@ -208,6 +208,8 @@ const {
   flash,           // flash("Message") — toast for 3.5s
   logActivity,     // logActivity("converted", "Maryam", "Ahmed Khan")
   setConfirm,      // setConfirm({ title, msg, onConfirm }) — confirm modal
+  confirmDeleteDemo,    // confirmDeleteDemo(demo, { onAfterDelete? }) — manager hard-delete with confirm modal + cascade
+  confirmDeleteSession, // confirmDeleteSession(id, label, { onAfterDelete? }) — manager hard-delete on sessions table
   notifications,   // Computed: pending demos aged 3+ days
   dateRange, setDateRange,
   loading,         // True during initial fetch
@@ -507,6 +509,7 @@ done
 - Do NOT name PL/pgSQL RPC parameters the same as the columns they write to. `SET teaching_matrix = teaching_matrix` with both as a param + column is ambiguous and Postgres rejects it. Prefix every RPC parameter with `p_*` (`p_id`, `p_teaching_matrix`, etc.). Renaming a param requires `DROP FUNCTION … ; CREATE FUNCTION …` — plan ahead. See `memory/feedback_plpgsql_param_name_collision.md`.
 - Do NOT have an RPC enqueue a `queued` row in `task_queue` when a backend router will also try to start a task for the same action. The backend's idempotency check will see the RPC's row and 409 forever. The backend owns task_queue lifecycle; the RPC stops at writing user-facing state. See `memory/feedback_never_pre_enqueue_task_queue_in_rpc.md`.
 - Do NOT create a new public table expecting live UI updates without adding it to `supabase_realtime` publication in the same migration. Logical replication silently drops unpublished tables; `postgres_changes` subscriptions return zero events. See `memory/feedback_realtime_publication_check.md`.
+- Do NOT call `supabase.from("demos" | "sessions").delete()` directly from a page. Use `confirmDeleteDemo(demo, { onAfterDelete? })` or `confirmDeleteSession(id, label, { onAfterDelete? })` from `useStore()`. The helpers wrap the confirm modal + activity log + toast + cascade semantics in one place; bypassing them drifts the copy, skips the audit trail, and (for demos) bypasses the `setDemos` diff-writer that handles POUR/draft/accountability/task_queue cascade. Manager-only gate (`user?.role === "manager"`) stays at every call site — helper trusts the caller.
 
 ## When In Doubt
 

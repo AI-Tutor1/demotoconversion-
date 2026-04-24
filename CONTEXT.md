@@ -191,8 +191,23 @@ The sales agent can override the suggestion.
 ### Step 11: Teacher Review Sheet
 All demos for a teacher are aggregated into a performance profile: conversion rate, average rating, POUR frequency by category, and a coaching report with specific improvement actions.
 
-### Demo deletion (manager-only)
-Managers may hard-delete any demo from its detail page (`/analyst/{id}` → "Delete demo"). Deletion cascades at the DB level to `pour_issues`, `demo_drafts`, `demo_accountability`, and `task_queue` rows via `ON DELETE CASCADE`. Analysts and sales agents cannot delete — the client button is hidden and RLS blocks the DELETE. There is no soft-delete / archive / undo; the action is permanent and logged to the activity feed. Use cases: junk entries, duplicate ingests, test data, and PII-contaminated records.
+### Demo & session deletion (manager-only)
+
+**Who:** Only managers. Analysts, sales agents, and HR never see the delete button; RLS also blocks the DELETE at the DB level as a defence-in-depth.
+
+**What can be deleted:**
+- **Demos** — anywhere a demo is listed or shown. As of 2026-04-24 this means: dashboard `/` Recent demos, `/conducted`, `/drafts` (AI queue + Sales queue), `/sales` (queue card + detail panel), and `/analyst/{id}` detail. Cascades via `ON DELETE CASCADE` to `pour_issues`, `demo_drafts`, `demo_accountability`, and `task_queue`.
+- **Sessions** — the product-review session list (`/sessions`) and the detail page (`/sessions/{id}`). Cascades to `session_drafts` via FK; no other dependents.
+
+**How it runs in code:** Every delete surface calls one of two helpers on `useStore()` — `confirmDeleteDemo(demo, { onAfterDelete? })` or `confirmDeleteSession(id, label, { onAfterDelete? })`. The helper opens the shared confirm modal, on OK performs the DB delete (via `setDemos` diff-writer for demos, direct `supabase.from("sessions").delete()` for sessions), appends an `activity_feed` entry `"deleted"`, and flashes "Demo deleted" / "Session deleted". Direct `supabase.from(...).delete()` calls from pages are banned — see CLAUDE.md Do-Not rules.
+
+**UX guarantees:**
+- Confirm modal is mandatory; title names the student (demo) or session id (session); body lists the cascade.
+- Optimistic UI — the row disappears immediately; realtime confirms across other tabs within ~1s.
+- Detail-page deletes navigate the user back to the parent list via the `onAfterDelete` callback (`/analyst/{id}` → `/`, `/sessions/{id}` → `/sessions`, `/sales` detail panel → clears selection).
+- Row-clickable surfaces (`/conducted` rows open the accountability drawer; `/sales` cards select the demo) MUST `stopPropagation` on the delete button.
+
+**No soft-delete / archive / undo.** The action is permanent. Use cases: junk entries, duplicate ingests, test data, PII-contaminated records.
 
 ## Multi-User Assignment Rules
 
