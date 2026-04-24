@@ -83,6 +83,8 @@ interface ApprovedSessionRow extends SessionRow {
     draft_data: DraftData;
     status: DemoDraftStatus;
     reviewed_at: string | null;
+    reviewed_by: string | null;
+    approval_rate: number | null;
   }[];
 }
 
@@ -167,6 +169,9 @@ export function dbRowToApprovedSession(row: ApprovedSessionRow): ApprovedSession
     overallSummary: draft.draft_data?.overall_summary ?? "",
     improvementSuggestions: draft.draft_data?.improvement_suggestions ?? "",
     reviewedAt: draft.reviewed_at,
+    reviewedBy: draft.reviewed_by ?? null,
+    approvalRate: draft.approval_rate ?? null,
+    rawDraftData: draft.draft_data,
     draftStatus: draft.status,
   };
 }

@@ -681,3 +681,41 @@ A single-day audit pass addressed 5 critical security holes, 8 high-severity cor
 - **GUARDRAIL:** `npm run build` is not sufficient for any change that touches DB RPCs, new columns, backend endpoints, or env vars. Always run `./scripts/smoke.sh`. The pre-push hook makes this automatic; `git push --no-verify` only for genuine emergencies.
 
 ---
+
+## Part N+1: 2026-04-25 Sessions Analytics Tab — Architecture & Reuse Decisions
+
+**Date:** April 2026
+**Scope:** Added a second tab to `/analytics` covering Product-Review Sessions, with 12 useMemo aggregations over `useStore().rangedApprovedSessions` and an in-page per-teacher drawer. Extended the data layer instead of duplicating the AI scorecard pipeline.
+
+### What shipped
+- **Data layer widened.** [lib/types.ts](lib/types.ts) `ApprovedSession` now carries `rawDraftData: DraftData`, `reviewedBy: string | null`, `approvalRate: number | null` (in addition to the existing `scorecardTotal`, `scoreInterpretation`, `pourIssues`, `overallSummary`, `improvementSuggestions`, `reviewedAt`, `draftStatus`). The supabase select in [lib/store.tsx](lib/store.tsx) `fetchApprovedSessions` was widened to `*, session_drafts!inner ( draft_data, status, reviewed_at, reviewed_by, approval_rate )`. [lib/review-transforms.ts](lib/review-transforms.ts) `ApprovedSessionRow` + `dbRowToApprovedSession` thread the new fields through.
+- **`rangedApprovedSessions` memo** added to the store as a sibling of `rangedDemos` — filters `approvedSessions` by global `dateRange` on `sessionDate`. Sessions without a `sessionDate` are excluded (can't participate in a date-range chart).
+- **`reviewerNames`** — one-shot `useStore().fetchReviewers(role)` call at sign-in fetches `{id, full_name}` from `users` where `role IN ('analyst','manager')` → `Record<uuid, full_name>`. Powers the Sessions reviewer leaderboard.
+- **Tab switcher at [app/analytics/page.tsx](app/analytics/page.tsx)**: a 30-line Suspense-wrapped shell that reads `user.role` + `?tab`, renders [components/analytics-tabs.tsx](components/analytics-tabs.tsx) + either [components/demos-analytics.tsx](components/demos-analytics.tsx) (the previous 425-line body, extracted verbatim) or [components/sessions-analytics.tsx](components/sessions-analytics.tsx).
+- **Sessions tab composition** — orchestrator owns all memos; 7 presentational child components receive already-aggregated props. Per-teacher drawer at [components/sessions-teacher-drawer.tsx](components/sessions-teacher-drawer.tsx) mirrors the [components/accountability-drawer.tsx](components/accountability-drawer.tsx) shell at 520px width.
+
+### Why not a separate `/analytics/sessions` route
+- Tabs keep the global date-range, the URL, and the nav item unified. `?tab=sessions` is deep-linkable. Role gate hides the Sessions pill entirely for sales + hr; URL manipulation silently falls back to Demos.
+
+### Why widen `ApprovedSession` instead of refetching drafts per chart
+- The AI scorecard helpers in [lib/scorecard.ts](lib/scorecard.ts) (`avgPerQuestion`, `avgTotalScore`, `weakestQuestion`) expect `DemoDraft[]` with `draft_data` on each row. By exposing `rawDraftData` on `ApprovedSession`, the Sessions tab (and any future consumer — `/students/[id]`, a reviewer-ops dashboard, etc.) builds a synthetic `DemoDraft[]` client-side with zero extra queries. One query produces every chart on the page.
+- Cost: ~3 extra columns × 500 rows ≈ negligible payload increase (<80KB), one-time at sign-in + realtime.
+- **GUARDRAIL:** Any future session surface that needs per-question scores, reviewer throughput, or approval rates should read directly from `approvedSessions` / `rangedApprovedSessions` — do **not** add a second `fetchSessionsFullForX()` call.
+
+### Why grouping keys, not names, on every leaderboard
+- Sessions leaderboard groups by `sessionGroupKey(s)` = `"id:<teacher_user_id>"` when present, falls back to `"name:<lowercased teacherUserName>"`. Name-based grouping survives the teacher-linkage data-quality gap (see [memory/feedback_join_by_stable_fk.md](memory/feedback_join_by_stable_fk.md)) but is flagged in the UI with a "missing id" pill so data-quality work remains visible. The key is exported from the drawer file so the drawer's per-teacher filter matches leaderboard identity exactly.
+
+### Why a pill segmented control, not an underline tab strip
+- [components/analytics-tabs.tsx](components/analytics-tabs.tsx) uses pills (blue filled for active, grey outline for inactive) because the active tab drives a full-page content swap — the underline-tab pattern in [DESIGN.md](DESIGN.md) is reserved for filtering-within-a-page (HR tabs with counts, drawer tabs inside a single record). If a third tab is added, consider migrating to the underline pattern.
+
+### Decisions explicitly rejected
+- **Merge demos + sessions into one scrolling page.** Rejected — doubles the memo dependency graph and makes the date-range signal ambiguous (users can't tell whether a chart drop is demo-side or session-side).
+- **Session-side processing funnel.** Rejected for v1 — scope is approved-only; funnel would force a second query against `sessions` with all statuses, which already exists as `teacherSessions` but has a different retention contract (1000 rows, no date-filter).
+- **RadarChart inside the teacher drawer.** Rejected — would duplicate [components/teacher-scorecard.tsx](components/teacher-scorecard.tsx) RadarChart code. Horizontal Q1–Q8 bars (coloured via `scoreColor`) are also better in the narrow 520px drawer.
+
+### Verification
+- `./scripts/smoke.sh` passed (Four Laws, `npm run build`, RPC manifest, backend contract).
+- Build-time verified: extracting [components/demos-analytics.tsx](components/demos-analytics.tsx) verbatim produces byte-identical render for the Demos tab.
+- Manual walk (analyst + manager + sales + hr) to be performed on `localhost:3000` before deploy, per CLAUDE.md §Before You Deploy.
+
+---

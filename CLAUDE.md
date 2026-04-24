@@ -125,7 +125,7 @@ UNDERSTAND → LOCATE → PLAN → IMPLEMENT → VERIFY → REPORT
 │   ├── analyst/page.tsx          # Analyst review form (Steps 1–5)
 │   ├── sales/page.tsx            # Sales queue + detail + Step 10 accountability
 │   ├── kanban/page.tsx           # Drag-drop board (workflow_stage columns)
-│   ├── analytics/page.tsx        # All charts (computed from live demos)
+│   ├── analytics/page.tsx        # Tab switcher: Demos | Sessions (?tab=sessions). All charts computed from live data.
 │   ├── teachers/page.tsx         # Teacher performance + drill-down
 │   ├── enrollments/page.tsx      # Product Review: enrollment CSV upload + table
 │   └── sessions/
@@ -182,6 +182,10 @@ UNDERSTAND → LOCATE → PLAN → IMPLEMENT → VERIFY → REPORT
 | `components/session-draft-review.tsx` | Session scorecard review | When modifying session approval flow |
 | `components/teacher-product-log.tsx` | Approved-sessions list (per teacher or student). Accepts optional `filterFn: (s: TeacherSession) => boolean` prop for narrowing sessions **after** the stable-FK teacher/student match. | When changing /teachers Product log, wiring drill-level filters into the Product log tab, or building /students/[id] |
 | `components/accountability-drawer.tsx` | Slide-in panel opened from /conducted row-click. Analyst/manager finalises the Product/Sales/Consumer-Issue multi-select for a Not-Converted demo. Goes through `finalizeAccountability` / `clearAccountability` store actions (atomic RPCs). | When changing accountability UX, adding categories, or wiring accountability into other surfaces (e.g. /students/[id]) |
+| `components/demos-analytics.tsx` | The "Demos" tab body on `/analytics`. Verbatim extraction of the pre-tab-switcher page — hero, funnel, trend, POUR, QA scorecard, accountability, aging, subject demand, lead pipeline, agent leaderboard. Still reads `useStore().rangedDemos`. | When adding or adjusting a demo-side analytics chart |
+| `components/sessions-analytics.tsx` | The "Sessions" tab body on `/analytics`. Orchestrates 12 useMemo aggregations over `useStore().rangedApprovedSessions` (interpretation bands, monthly trend, Q1–Q8 averages, POUR, subject/grade/curriculum, turnaround, attendance, teacher leaderboard, reviewer leaderboard) and owns the per-teacher drawer open state. Analyst/manager only; silently falls back to Demos tab otherwise. Child components are purely presentational: `sessions-interpretation-row`, `sessions-volume-trend`, `sessions-quality-charts`, `sessions-breakdowns`, `sessions-teacher-leaderboard`, `sessions-reviewer-leaderboard`, `sessions-teacher-drawer`. | When adding or adjusting a sessions-side analytics chart, or wiring a new aggregation into `useStore().rangedApprovedSessions` |
+| `components/analytics-tabs.tsx` | Sticky pill tab strip (Demos \| Sessions) rendered directly below the fixed nav on `/analytics`. URL-syncs via `?tab=sessions`. Hides the Sessions pill unless `user.role` is analyst or manager. | When adding another analytics tab or changing the role gate |
+| `components/sessions-teacher-drawer.tsx` | Right-slide drawer opened from the Sessions teacher leaderboard. Shows all-time approved sessions for that teacher (not date-filtered), Q1–Q8 averages, POUR breakdown, weakest question, 10 most recent approved sessions, and a link to `/teachers/[id]`. Exports `sessionGroupKey()` — the single source of truth for teacher-row identity on the Sessions tab. | When changing the teacher drill UX on `/analytics`, or adding a new drawer section |
 | `backend/app/scheduler.py` | APScheduler job that auto-retries failed sessions every 15 min | When tuning retry behavior, adding failure classifications, or debugging stuck sessions |
 | `app/hr/page.tsx` | HR workspace. 4 tabs (Candidates / Pending / Approved / Rejected). Route-gated to hr+manager. Opens `HrCandidateForm` and `HrInterviewDrawer`. | When changing HR intake or the interview/decision flow |
 | `app/teachers/[id]/page.tsx` | Teacher profile page. Tabs: Profile · Rates · Schedule · Demos · Interview (hr/manager only). Edit button visible to hr/manager/**analyst** — goes through `update_teacher_profile` RPC (whitelisted fields, never `tid`/`status`). | When changing profile edit UX, adding fields, or wiring new tabs |
@@ -204,6 +208,8 @@ const {
   setDemos,          // Wrapped setter — diff + batched Supabase write + rollback
   rangedDemos,       // demos filtered by global date range
   approvedSessions,  // Approved product-review sessions joined to their scorecard (analyst/manager only)
+  rangedApprovedSessions, // approvedSessions filtered by global dateRange (Sessions analytics tab)
+  reviewerNames,     // Record<uuid, full_name> for analyst+manager users — powers the reviewer leaderboard
   stats,           // Computed: { total, converted, pending, notConv, rate, avgR, pourRate }
   flash,           // flash("Message") — toast for 3.5s
   logActivity,     // logActivity("converted", "Maryam", "Ahmed Khan")
@@ -468,7 +474,9 @@ done
 
 **Kanban** — cards in correct column based on `workflowStage` (NOT age/data-presence); drag-drop shows drop target + confirmation modal on Converted/Not Converted.
 
-**Analytics** — all 5 charts have non-empty data; respond to global date range.
+**Analytics (Demos tab)** — all 9 panels (funnel, trend, POUR, QA scorecard, accountability, aging, subject demand, lead pipeline, agent leaderboard) have non-empty data; respond to global date range.
+
+**Analytics (Sessions tab)** — analyst/manager only; `?tab=sessions` deep-links; interpretation bands sum to `approvedCount`; Q1–Q8 ratios stay in 0–100% (Q6 not perpetually last); clicking a teacher card opens the per-teacher drawer with Q1–Q8 bars, POUR, weakest-Q tile, recent-sessions list; backdrop click + Esc close the drawer; reviewer leaderboard shows real names not UUIDs.
 
 **Teachers** — cards show correct stats; drill-down chart uses actual dates on x-axis; close button dismisses.
 

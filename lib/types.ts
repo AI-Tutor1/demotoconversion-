@@ -643,6 +643,9 @@ export interface ApprovedSession extends Session {
   overallSummary: string;
   improvementSuggestions: string;
   reviewedAt: string | null;
+  reviewedBy: string | null;
+  approvalRate: number | null;
+  rawDraftData: DraftData;
   draftStatus: DemoDraftStatus;
 }
 

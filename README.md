@@ -89,7 +89,7 @@ app/
   analyst/page.tsx         # Review form (Steps 1–5)
   sales/page.tsx           # Sales queue + detail + Step 10
   kanban/page.tsx          # Drag-drop board (workflow_stage)
-  analytics/page.tsx       # 5 charts
+  analytics/page.tsx       # Demos | Sessions tab switcher (?tab=sessions, analyst/manager only)
   teachers/page.tsx        # Teacher performance + drill-down
 components/
   nav.tsx                  # Role-filtered nav + user menu
@@ -116,7 +116,7 @@ supabase/migrations/       # SQL migrations (timestamp-prefixed)
 | `/analyst` | Demo review form (Steps 1–5) with POUR descriptions, validation, submit guard |
 | `/sales` | Sales queue with filters, bulk actions, Step 10 accountability, recording link |
 | `/kanban` | 5-column board driven by `workflow_stage` with drag-drop + confirmation |
-| `/analytics` | Conversion funnel, POUR breakdown, aging, subject demand, agent leaderboard |
+| `/analytics` | Two tabs (Demos \| Sessions, `?tab=sessions`). **Demos** — conversion funnel, POUR, QA scorecard, accountability, aging, subject demand, lead pipeline, agent leaderboard. **Sessions** (analyst + manager only) — interpretation bands, monthly volume + avg score, Q1–Q8 rubric ratios, POUR, subject/grade/curriculum breakdown, ingest→approved turnaround, attendance KPIs, teacher leaderboard with per-teacher drawer, reviewer leaderboard. All computed from `useStore().rangedApprovedSessions`. |
 | `/teachers` | Teacher cards with sort + drill-down (analyst, manager, hr) |
 | `/teachers/[id]` | Teacher profile: tabs for Profile · Rates · Schedule · Demos · Interview (hr/manager only). Edit button goes through whitelisted RPC. |
 | `/hr` | HR workspace — candidate intake, interview + rubric, scorecard, rates, schedule, Approved/Pending/Rejected decision. Role-gated to hr + manager. |
