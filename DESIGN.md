@@ -175,6 +175,11 @@ background: #38b6ff;
 ```
 The nav bar is the Tuitional brand chrome. Solid sky-blue (no glass / no backdrop-filter — those were the old dark-bar treatment).
 
+### Brand Mark
+- Source: `/public/tuitional-logo.svg`
+- Render: `height: 28; width: 28; borderRadius: 50%` — the logo's intrinsic content is circular; the SVG ships with a white square background (the inner brand arc is itself `#38b6ff` and would vanish against the bar without it), so we crop to a circle to read as a clean brand coin rather than a white sticker.
+- Position: leftmost in `.nav-inner`, `marginRight: 16` from the first nav link.
+
 ### Nav Links
 - Default: `color: #1d1d1f; font-weight: 400; font-size: 12px`
 - Hover: `color: #000`

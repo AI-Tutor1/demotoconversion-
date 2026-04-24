@@ -104,6 +104,8 @@ lib/
   supabase-server.ts       # Server client (cookies-based)
   transforms.ts            # DB↔App row mapping (snake_case ↔ camelCase, POUR cat↔category)
 middleware.ts              # Session check + role gate + cookie refresh
+public/
+  tuitional-logo.svg       # Brand mark rendered in the nav bar
 supabase/migrations/       # SQL migrations (timestamp-prefixed)
 ```
 

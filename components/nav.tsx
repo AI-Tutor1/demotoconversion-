@@ -97,7 +97,7 @@ export default function Nav() {
           <img
             src="/tuitional-logo.svg"
             alt="Tuitional"
-            style={{ height: 24, width: "auto", marginRight: 16, flexShrink: 0 }}
+            style={{ height: 28, width: 28, borderRadius: "50%", marginRight: 16, flexShrink: 0 }}
           />
 
           {/* Nav links (filtered to current user's role) */}

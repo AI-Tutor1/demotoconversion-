@@ -151,6 +151,8 @@ UNDERSTAND → LOCATE → PLAN → IMPLEMENT → VERIFY → REPORT
 │   ├── csv-parser.ts             # Client-side CSV parser + column mappers (enrollments, sessions)
 │   └── review-transforms.ts      # DB row ↔ camelCase for enrollments + sessions
 ├── middleware.ts                 # Route protection + auth refresh
+├── public/
+│   └── tuitional-logo.svg        # Brand mark rendered in the nav bar
 ├── supabase/
 │   └── migrations/               # SQL migrations (timestamp-prefixed)
 ├── .env.example                  # Template
