@@ -664,13 +664,9 @@ export default function ConductedPage() {
                           )}
                         </td>
                         <td style={{ padding: "9px 12px" }} onClick={(e) => e.stopPropagation()}>
-                          {hasDraft ? (
-                            <Link href={`/analyst/${d.id}`} style={{ color: BLUE, textDecoration: "none", fontWeight: 500 }}>
-                              View →
-                            </Link>
-                          ) : (
-                            <span style={{ color: MUTED }}>—</span>
-                          )}
+                          <Link href={`/analyst/${d.id}`} style={{ color: BLUE, textDecoration: "none", fontWeight: 500 }}>
+                            View →
+                          </Link>
                         </td>
                       </tr>
                     );
