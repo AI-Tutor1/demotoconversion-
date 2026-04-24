@@ -52,7 +52,7 @@ function toOpts(arr: string[]) {
 }
 
 export default function SessionsPage() {
-  const { flash, user } = useStore();
+  const { flash, user, confirmDeleteSession } = useStore();
   const [sessions, setSessions] = useState<Session[]>([]);
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
@@ -791,6 +791,7 @@ export default function SessionsPage() {
                       <th>Date</th>
                       <th>Status</th>
                       <th>Recording</th>
+                      {user?.role === "manager" && <th></th>}
                     </tr>
                   </thead>
                   <tbody>
@@ -820,6 +821,24 @@ export default function SessionsPage() {
                             <span style={{ fontSize: 12, color: MUTED }}>—</span>
                           )}
                         </td>
+                        {user?.role === "manager" && (
+                          <td>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                confirmDeleteSession(s.id, s.sessionId, {
+                                  onAfterDelete: () =>
+                                    setSessions((prev) => prev.filter((x) => x.id !== s.id)),
+                                })
+                              }
+                              className="pill pill-outline"
+                              style={{ fontSize: 11, padding: "3px 10px", color: "#B42318", borderColor: "#FDA29B" }}
+                              title="Delete session"
+                            >
+                              Delete
+                            </button>
+                          </td>
+                        )}
                       </tr>
                     ))}
                   </tbody>

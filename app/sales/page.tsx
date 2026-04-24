@@ -65,7 +65,7 @@ function toOpts(arr: string[]) {
 // ─── Page ─────────────────────────────────────────────────────────
 
 export default function SalesPage() {
-  const { rangedDemos, setDemos, flash, setConfirm, logActivity, salesAgents, draftsByDemoId, approvedTeachers } = useStore();
+  const { rangedDemos, setDemos, flash, setConfirm, logActivity, salesAgents, draftsByDemoId, approvedTeachers, user, confirmDeleteDemo } = useStore();
   const [selDemo, setSelDemo] = useState<number | null>(null);
   const [bulkSel, setBulkSel] = useState<number[]>([]);
 
@@ -581,6 +581,17 @@ export default function SalesPage() {
                                 </span>
                               );
                             })()}
+                            {user?.role === "manager" && (
+                              <button
+                                type="button"
+                                onClick={(e) => { e.stopPropagation(); confirmDeleteDemo(d); }}
+                                className="pill pill-outline"
+                                style={{ fontSize: 10, padding: "2px 8px", color: "#B42318", borderColor: "#FDA29B" }}
+                                title="Delete demo"
+                              >
+                                Delete
+                              </button>
+                            )}
                           </div>
                         </div>
                         {d.pour.length > 0 && <div style={{ marginTop: 4 }}>{d.pour.map((pp) => <span key={pp.cat} className="pour-tag">{pp.cat}</span>)}</div>}
@@ -599,7 +610,20 @@ export default function SalesPage() {
                     <h3 style={{ fontSize: 22, fontWeight: 600 }}>{sel.student}</h3>
                     <p style={{ fontSize: 13, color: MUTED, marginTop: 3 }}>{sel.teacher} (ID: {sel.tid}) · {sel.level} {sel.subject} · {formatMonth(sel.date)}{sel.leadNumber && <> · <span style={{ color: "#0071e3", fontWeight: 600 }}>{sel.leadNumber}</span></>}</p>
                   </div>
-                  <button onClick={() => setSelDemo(null)} style={{ background: LIGHT_GRAY, border: "none", borderRadius: "50%", width: 28, height: 28, cursor: "pointer", fontSize: 14, color: MUTED, display: "flex", alignItems: "center", justifyContent: "center" }}>{"\u2715"}</button>
+                  <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                    {user?.role === "manager" && (
+                      <button
+                        type="button"
+                        onClick={() => confirmDeleteDemo(sel, { onAfterDelete: () => setSelDemo(null) })}
+                        className="pill pill-outline"
+                        style={{ fontSize: 12, padding: "5px 14px", color: "#B42318", borderColor: "#FDA29B" }}
+                        title="Delete demo"
+                      >
+                        Delete demo
+                      </button>
+                    )}
+                    <button onClick={() => setSelDemo(null)} style={{ background: LIGHT_GRAY, border: "none", borderRadius: "50%", width: 28, height: 28, cursor: "pointer", fontSize: 14, color: MUTED, display: "flex", alignItems: "center", justifyContent: "center" }}>{"\u2715"}</button>
+                  </div>
                 </div>
 
                 {/* Analyst review summary (read-only) — prefer the QA scorecard

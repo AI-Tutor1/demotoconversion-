@@ -16,7 +16,7 @@ import { interpretationBadge, Q_KEYS, Q_META, scoreColor } from "@/lib/scorecard
 export default function SessionDetailPage() {
   const params = useParams();
   const router = useRouter();
-  const { flash } = useStore();
+  const { flash, user, confirmDeleteSession } = useStore();
   const sessionId = Number(params.id);
 
   const [session, setSession] = useState<Session | null>(null);
@@ -125,9 +125,25 @@ export default function SessionDetailPage() {
       {/* Hero */}
       <section style={{ background: LIGHT_GRAY, paddingTop: 92, paddingBottom: 32 }}>
         <div className="animate-fade-up" style={{ maxWidth: 1100, margin: "0 auto", padding: "0 24px" }}>
-          <Link href="/sessions" style={{ fontSize: 13, color: BLUE, textDecoration: "none" }}>
-            ← Back to Sessions
-          </Link>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <Link href="/sessions" style={{ fontSize: 13, color: BLUE, textDecoration: "none" }}>
+              ← Back to Sessions
+            </Link>
+            {user?.role === "manager" && (
+              <button
+                type="button"
+                onClick={() =>
+                  confirmDeleteSession(session.id, session.sessionId, {
+                    onAfterDelete: () => router.push("/sessions"),
+                  })
+                }
+                className="pill pill-outline"
+                style={{ fontSize: 12, padding: "5px 14px", color: "#B42318", borderColor: "#FDA29B" }}
+              >
+                Delete session
+              </button>
+            )}
+          </div>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginTop: 12, flexWrap: "wrap", gap: 16 }}>
             <div>
               <p className="section-label">Session Detail</p>

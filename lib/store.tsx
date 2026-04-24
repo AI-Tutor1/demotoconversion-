@@ -76,6 +76,11 @@ interface StoreContextType {
     c: { title: string; msg: string; onConfirm: () => void } | null
   ) => void;
   confirmDeleteDemo: (demo: Demo, opts?: { onAfterDelete?: () => void }) => void;
+  confirmDeleteSession: (
+    sessionId: number,
+    label: string,
+    opts?: { onAfterDelete?: () => void }
+  ) => void;
   loading: boolean;
   user: UserProfile | null;
   salesAgents: UserProfile[];
@@ -1084,6 +1089,26 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     [setDemos, logActivity, flash]
   );
 
+  const confirmDeleteSession = useCallback(
+    (sessionId: number, label: string, opts?: { onAfterDelete?: () => void }) => {
+      setConfirm({
+        title: `Delete session ${label}?`,
+        msg: "This permanently removes the session and its QA scorecard draft. This cannot be undone.",
+        onConfirm: async () => {
+          const { error } = await supabase.from("sessions").delete().eq("id", sessionId);
+          if (error) {
+            flash(`Failed to delete session: ${error.message}`);
+            return;
+          }
+          logActivity("deleted", `Session ${label}`);
+          flash("Session deleted");
+          opts?.onAfterDelete?.();
+        },
+      });
+    },
+    [logActivity, flash]
+  );
+
   // ─── Derived memos ────────────────────────────────────────────
   const rangedDemos = useMemo(
     () => demos.filter((d) => !d.isDraft && inDateRange(d.date, dateRange)),
@@ -1205,6 +1230,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         finalizeAccountability,
         clearAccountability,
         confirmDeleteDemo,
+        confirmDeleteSession,
         processingDemoIds,
         approvedSessions,
         teacherSessions,
