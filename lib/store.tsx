@@ -13,6 +13,7 @@ import {
 
 import {
   Demo,
+  Lead,
   ActivityEntry,
   Notification,
   DemoDraft,
@@ -24,7 +25,7 @@ import {
 import { SEED_ACTIVITY } from "./data";
 import { inDateRange, ageDays } from "./utils";
 import { supabase } from "./supabase";
-import { dbRowToDemo, demoToInsertRow, pourToDbRows, type DemoRow } from "./transforms";
+import { dbRowToDemo, dbRowToLead, demoToInsertRow, pourToDbRows, type DemoRow, type RawLeadRow } from "./transforms";
 import { dbRowToApprovedSession, dbRowToTeacherSession } from "./review-transforms";
 import { dbRowToTeacherProfile } from "./teacher-transforms";
 import { createSupabaseSync } from "./supabase-sync";
@@ -53,6 +54,10 @@ export type ProcessRecordingResult =
 
 export type CreateDemoResult =
   | { ok: true; id: number }
+  | { ok: false; error: string };
+
+export type CreateLeadResult =
+  | { ok: true; id: number; leadNumber: string }
   | { ok: false; error: string };
 
 interface StoreContextType {
@@ -115,6 +120,8 @@ interface StoreContextType {
     payload: Partial<TeacherProfile>
   ) => Promise<{ ok: true } | { ok: false; error: string }>;
   processHrRecording: (profileId: string) => Promise<{ ok: true } | { ok: false; error: string }>;
+  leads: Lead[];
+  createLead: (studentName: string) => Promise<CreateLeadResult>;
   stats: {
     total: number;
     converted: number;
@@ -146,6 +153,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const [teacherSessions, setTeacherSessions] = useState<TeacherSession[]>([]);
   const [sessionTeachers, setSessionTeachers] = useState<{ teacherUserName: string; teacherUserId: string | null }[]>([]);
   const [teacherProfiles, setTeacherProfiles] = useState<TeacherProfile[]>([]);
+  const [leads, setLeads] = useState<Lead[]>([]);
 
   const processedRealtimeIds = useRef<Set<number>>(new Set());
   const processedRealtimeDraftIds = useRef<Set<string>>(new Set());
@@ -203,7 +211,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     setLoading(true);
     const { data, error } = await supabase
       .from("demos")
-      .select("*, pour_issues ( category, description ), demo_accountability ( category )")
+      .select("*, pour_issues ( category, description ), demo_accountability ( category ), leads ( lead_number )")
       .order("ts", { ascending: false });
     if (error) {
       flash(`Failed to load demos: ${error.message}`);
@@ -213,6 +221,15 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     }
     setLoading(false);
   }, [flash]);
+
+  const fetchLeads = useCallback(async () => {
+    const { data } = await supabase
+      .from("leads")
+      .select("id, lead_number, student_name, created_by, created_at, updated_at")
+      .order("id", { ascending: false })
+      .limit(2000);
+    setLeads((data ?? []).map((r) => dbRowToLead(r as RawLeadRow)));
+  }, []);
 
   const fetchDrafts = useCallback(async () => {
     const { data, error } = await supabase
@@ -361,12 +378,14 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         event === "TOKEN_REFRESHED"
       ) {
         fetchDemos();
+        fetchLeads();
         syncUserProfile();
         fetchDrafts();
         fetchProcessingDemoIds();
         fetchTeacherProfiles();
       } else if (event === "SIGNED_OUT") {
         setDemosRaw([]);
+        setLeads([]);
         setUser(null);
         setSalesAgents([]);
         setDrafts([]);
@@ -381,7 +400,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     return () => {
       data.subscription.unsubscribe();
     };
-  }, [fetchDemos, syncUserProfile, fetchDrafts, fetchProcessingDemoIds, fetchTeacherProfiles]);
+  }, [fetchDemos, fetchLeads, syncUserProfile, fetchDrafts, fetchProcessingDemoIds, fetchTeacherProfiles]);
 
   // Flash reader for middleware route-denied redirects (?denied=<prefix>)
   useEffect(() => {
@@ -436,14 +455,17 @@ export function StoreProvider({ children }: { children: ReactNode }) {
             supabase.from("pour_issues").select("category, description").eq("demo_id", newId),
             supabase.from("demo_accountability").select("category").eq("demo_id", newId),
           ]);
-          const row = {
-            ...(payload.new as unknown as DemoRow),
-            pour_issues: pours ?? [],
-            demo_accountability: accts ?? [],
-          };
-          setDemosRaw((prev) =>
-            prev.map((d) => (d.id === newId ? dbRowToDemo(row) : d))
-          );
+          setDemosRaw((prev) => {
+            const existing = prev.find((d) => d.id === newId);
+            const row: DemoRow = {
+              ...(payload.new as unknown as DemoRow),
+              // Carry forward the joined lead_number — realtime payload is a flat row
+              leads: existing?.leadNumber ? { lead_number: existing.leadNumber } : null,
+              pour_issues: pours ?? [],
+              demo_accountability: accts ?? [],
+            };
+            return prev.map((d) => (d.id === newId ? dbRowToDemo(row) : d));
+          });
         }
       )
       .on(
@@ -529,6 +551,36 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       supabase.removeChannel(channel);
     };
   }, [fetchTeacherProfiles]);
+
+  // ─── Realtime: leads ─────────────────────────────────────────
+  useEffect(() => {
+    const channel = supabase
+      .channel("leads-sync")
+      .on(
+        "postgres_changes",
+        { event: "INSERT", schema: "public", table: "leads" },
+        (payload) => {
+          const row = payload.new as unknown as RawLeadRow;
+          setLeads((prev) =>
+            prev.some((l) => l.id === row.id) ? prev : [dbRowToLead(row), ...prev]
+          );
+        }
+      )
+      .on(
+        "postgres_changes",
+        { event: "UPDATE", schema: "public", table: "leads" },
+        (payload) => {
+          const row = payload.new as unknown as RawLeadRow;
+          setLeads((prev) =>
+            prev.map((l) => (l.id === row.id ? dbRowToLead(row) : l))
+          );
+        }
+      )
+      .subscribe();
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, []);
 
   // ─── HR / Teacher onboarding action creators ─────────────────
 
@@ -928,6 +980,28 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     [flash]
   );
 
+  // ─── Lead creation ────────────────────────────────────────────
+  const createLead = useCallback(
+    async (studentName: string): Promise<CreateLeadResult> => {
+      const { data, error } = await supabase.rpc("create_lead", {
+        p_student_name: studentName,
+      });
+      if (error) return { ok: false, error: error.message };
+      const r = data as { id: number; lead_number: string };
+      const newLead: Lead = {
+        id: r.id,
+        leadNumber: r.lead_number,
+        studentName,
+        createdBy: null,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      };
+      setLeads((prev) => [newLead, ...prev]);
+      return { ok: true, id: r.id, leadNumber: r.lead_number };
+    },
+    []
+  );
+
   // ─── Accountability finalisation ──────────────────────────────
   // Bypass setDemos' diff engine — accountability is owned by the RPC
   // (atomic DELETE + INSERT + UPDATE), realtime fills state back in.
@@ -1116,6 +1190,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         approvedSessions,
         teacherSessions,
         sessionTeachers,
+        leads,
+        createLead,
         teacherProfiles,
         approvedTeachers,
         createTeacherCandidate,

@@ -78,6 +78,18 @@ export interface Demo {
   // Excluded from Dashboard KPIs, rangedDemos, Kanban, Analytics, and Teachers.
   // Flipped to FALSE by the analyst on scorecard approval.
   isDraft: boolean;
+  // Lead linkage — null for demos created before the leads migration.
+  leadId: number | null;
+  leadNumber: string | null;
+}
+
+export interface Lead {
+  id: number;
+  leadNumber: string;
+  studentName: string;
+  createdBy: string | null;
+  createdAt: string;
+  updatedAt: string;
 }
 
 // AI-generated draft output stored in the demo_drafts table.

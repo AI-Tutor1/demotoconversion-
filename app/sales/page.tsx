@@ -561,7 +561,7 @@ export default function SalesPage() {
                           <div>
                             <div style={{ fontSize: 14, fontWeight: 500 }}>{d.student}</div>
                             <div style={{ fontSize: 11, color: MUTED, marginTop: 1 }}>{d.teacher} · {d.level} {d.subject}</div>
-                            <div style={{ fontSize: 11, color: MUTED }}>{d.date}{d.status === "Pending" && age > 1 && <span style={{ marginLeft: 6, padding: "1px 7px", borderRadius: 980, fontSize: 10, fontWeight: 600, background: ageColor(age), color: ageTextColor(age) }}>{age}d</span>}</div>
+                            <div style={{ fontSize: 11, color: MUTED }}>{d.date}{d.status === "Pending" && age > 1 && <span style={{ marginLeft: 6, padding: "1px 7px", borderRadius: 980, fontSize: 10, fontWeight: 600, background: ageColor(age), color: ageTextColor(age) }}>{age}d</span>}{d.leadNumber && <span style={{ marginLeft: 8, fontSize: 10, fontWeight: 600, color: "#0071e3" }}>{d.leadNumber}</span>}</div>
                           </div>
                           <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 4 }}>
                             <StatusBadge status={d.status} />
@@ -597,7 +597,7 @@ export default function SalesPage() {
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "start", marginBottom: 16 }}>
                   <div>
                     <h3 style={{ fontSize: 22, fontWeight: 600 }}>{sel.student}</h3>
-                    <p style={{ fontSize: 13, color: MUTED, marginTop: 3 }}>{sel.teacher} (ID: {sel.tid}) · {sel.level} {sel.subject} · {formatMonth(sel.date)}</p>
+                    <p style={{ fontSize: 13, color: MUTED, marginTop: 3 }}>{sel.teacher} (ID: {sel.tid}) · {sel.level} {sel.subject} · {formatMonth(sel.date)}{sel.leadNumber && <> · <span style={{ color: "#0071e3", fontWeight: 600 }}>{sel.leadNumber}</span></>}</p>
                   </div>
                   <button onClick={() => setSelDemo(null)} style={{ background: LIGHT_GRAY, border: "none", borderRadius: "50%", width: 28, height: 28, cursor: "pointer", fontSize: 14, color: MUTED, display: "flex", alignItems: "center", justifyContent: "center" }}>{"\u2715"}</button>
                 </div>

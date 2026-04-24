@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useState } from "react";
+import { Suspense, useState, useMemo } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { useStore } from "@/lib/store";
 import { Field } from "@/components/ui";
@@ -19,7 +19,7 @@ export default function AnalystPage() {
 
 function AnalystForm() {
   const router = useRouter();
-  const { createDemo, flash, logActivity, user, salesAgents, demos, triggerProcessRecording, approvedTeachers } = useStore();
+  const { createDemo, flash, logActivity, user, salesAgents, demos, triggerProcessRecording, approvedTeachers, leads, createLead } = useStore();
   // Query-param prefill — used by the "Reject AI draft" flow so the analyst
   // can re-log a session with demo metadata already filled in.
   const params = useSearchParams();
@@ -44,6 +44,8 @@ function AnalystForm() {
     grade: params.get("grade") ?? "",
     subject: params.get("subject") ?? "",
     recording: "",
+    leadId: "",
+    createNewLead: false,
   };
   const [f, setF] = useState(blank);
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -54,10 +56,22 @@ function AnalystForm() {
     setErrors((p) => ({ ...p, [k]: "" }));
   };
 
+  const leadOptions = useMemo(() => {
+    const q = f.student.toLowerCase().trim();
+    const matched = q.length >= 2
+      ? leads.filter ((l) => (l.studentName ?? "").toLowerCase().includes(q))
+      : leads.slice(0, 50);
+    return [
+      { value: "__new__", label: "+ Create new lead" },
+      ...matched.map((l) => ({ value: String(l.id), label: `${l.leadNumber} — ${l.studentName}` })),
+    ];
+  }, [leads, f.student]);
+
   const validate = () => {
     const e: Record<string, string> = {};
     if (!f.teacher) e.teacher = "Required";
     if (!f.student || f.student.length < 2) e.student = "Min 2 characters";
+    if (!f.leadId && !f.createNewLead) e.lead = "Select an existing lead or create a new one";
     if (!f.level) e.level = "Required";
     if (!f.grade) e.grade = "Required";
     if (!f.subject) e.subject = "Required";
@@ -98,6 +112,23 @@ function AnalystForm() {
       assignedAgentName = salesAgents.find((a) => a.id === lowestId)?.full_name ?? "";
     }
 
+    // Resolve the lead before inserting the demo
+    let resolvedLeadId: number | null = null;
+    let resolvedLeadNumber: string | null = null;
+    if (f.createNewLead) {
+      const leadResult = await createLead(f.student);
+      if (!leadResult.ok) {
+        flash(`Failed to create lead: ${leadResult.error}`);
+        setSubmitting(false);
+        return;
+      }
+      resolvedLeadId = leadResult.id;
+      resolvedLeadNumber = leadResult.leadNumber;
+    } else if (f.leadId) {
+      resolvedLeadId = Number(f.leadId);
+      resolvedLeadNumber = leads.find((l) => l.id === resolvedLeadId)?.leadNumber ?? null;
+    }
+
     const newDemo = {
       id: now, date: f.date, teacher: t?.name ?? "", tid: t?.uid ?? 0,
       student, level: f.level, grade: f.grade, subject: f.subject,
@@ -132,6 +163,8 @@ function AnalystForm() {
       feedbackPositiveEnvComment: "",
       feedbackSuggestions: "",
       feedbackComments: "",
+      leadId: resolvedLeadId,
+      leadNumber: resolvedLeadNumber,
     };
 
     // ─── INSERT first, get the real DB id, THEN call backend ───────────
@@ -204,6 +237,31 @@ function AnalystForm() {
 
           <Field label="Student name *" error={errors.student}>
             <input className={"apple-input" + (errors.student ? " error" : "")} placeholder="Full name" value={f.student} onChange={(e) => u("student", e.target.value)} />
+          </Field>
+
+          <Field label="Lead *" error={errors.lead}>
+            <SearchableSelect
+              buttonClassName={"apple-input apple-select" + (errors.lead ? " error" : "")}
+              width="100%"
+              invalid={!!errors.lead}
+              value={f.createNewLead ? "__new__" : f.leadId}
+              onChange={(v) => {
+                if (v === "__new__") {
+                  setF ((p) => ({ ...p, leadId: "", createNewLead: true }));
+                } else {
+                  setF ((p) => ({ ...p, leadId: v, createNewLead: false }));
+                }
+                setErrors((p) => ({ ...p, lead: "" }));
+              }}
+              placeholder="Search by student name or select..."
+              clearLabel="Clear lead selection"
+              options={leadOptions}
+            />
+            {f.createNewLead && (
+              <p style={{ fontSize: 11, color: MUTED, marginTop: 4 }}>
+                A new lead will be created for &quot;{f.student || "this student"}&quot; on submit.
+              </p>
+            )}
           </Field>
 
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 14 }}>

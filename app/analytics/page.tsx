@@ -118,6 +118,61 @@ export default function AnalyticsPage() {
     return buckets;
   }, [demos]);
 
+  // ─── Lead analytics ──────────────────────────────────────────
+  // All lead metrics are derived solely from rangedDemos so they respect the
+  // global date range filter. A lead "exists" here only if it has at least one
+  // demo in the current range.
+  const leadDemoMap = useMemo(() => {
+    const m = new Map<number, { converted: boolean; demoCount: number; contacted: boolean }>();
+    demos.filter((d) => d.leadId != null).forEach((d) => {
+      const prev = m.get(d.leadId!) ?? { converted: false, demoCount: 0, contacted: false };
+      m.set(d.leadId!, {
+        converted: prev.converted || d.status === "Converted",
+        demoCount: prev.demoCount + 1,
+        contacted: prev.contacted || ["contacted", "converted", "lost"].includes(d.workflowStage),
+      });
+    });
+    return m;
+  }, [demos]);
+
+  const leadKpis = useMemo(() => {
+    const total = leadDemoMap.size;
+    const converted = [...leadDemoMap.values()].filter((v) => v.converted).length;
+    const multiDemo = [...leadDemoMap.values()].filter((v) => v.demoCount > 1).length;
+    const avgDemos = total ? (demos.filter((d) => d.leadId != null).length / total) : 0;
+    return {
+      total,
+      convRate: total ? Math.round((converted / total) * 100) : 0,
+      multiDemoRate: total ? Math.round((multiDemo / total) * 100) : 0,
+      avgDemos: avgDemos.toFixed(1),
+    };
+  }, [leadDemoMap, demos]);
+
+  const demosPerLeadDist = useMemo(() => {
+    const dist = { "1 demo": 0, "2 demos": 0, "3+ demos": 0 };
+    leadDemoMap.forEach((v) => {
+      if (v.demoCount === 1) dist["1 demo"]++;
+      else if (v.demoCount === 2) dist["2 demos"]++;
+      else dist["3+ demos"]++;
+    });
+    return [
+      { name: "1 demo",   count: dist["1 demo"] },
+      { name: "2 demos",  count: dist["2 demos"] },
+      { name: "3+ demos", count: dist["3+ demos"] },
+    ];
+  }, [leadDemoMap]);
+
+  const leadFunnel = useMemo(() => {
+    const total = leadDemoMap.size;
+    const contacted = [...leadDemoMap.values()].filter((v) => v.contacted).length;
+    const converted = [...leadDemoMap.values()].filter((v) => v.converted).length;
+    return [
+      { stage: "Leads",     count: total },
+      { stage: "Contacted", count: contacted },
+      { stage: "Converted", count: converted },
+    ];
+  }, [leadDemoMap]);
+
   return (
     <>
       <section style={{ background: "#000", color: "#fff", padding: "88px 24px 40px", textAlign: "center" }}>
@@ -285,6 +340,64 @@ export default function AnalyticsPage() {
               </ResponsiveContainer>
             ) : <EmptyState text="No data" />}
           </div>
+        </div>
+      </section>
+
+      {/* Lead analytics */}
+      <section style={{ background: LIGHT_GRAY, padding: "32px 24px" }}>
+        <div style={{ maxWidth: 1100, margin: "0 auto" }}>
+          <div className="section-label">Leads</div>
+          <div style={{ fontSize: 21, fontWeight: 600, margin: "4px 0 16px" }}>Lead pipeline</div>
+          {leadKpis.total === 0 ? (
+            <EmptyState text="No leads with demos in this date range" />
+          ) : (
+            <>
+              {/* KPI tiles */}
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 12, marginBottom: 20 }}>
+                {[
+                  { label: "Total leads",       value: leadKpis.total },
+                  { label: "Lead conv. rate",   value: `${leadKpis.convRate}%` },
+                  { label: "Multi-demo rate",   value: `${leadKpis.multiDemoRate}%` },
+                  { label: "Avg demos / lead",  value: leadKpis.avgDemos },
+                ].map((k) => (
+                  <div key={k.label} style={{ background: "#fff", borderRadius: 14, padding: "16px 18px" }}>
+                    <div style={{ fontSize: 11, color: MUTED, fontWeight: 500, textTransform: "uppercase", letterSpacing: "0.04em" }}>{k.label}</div>
+                    <div style={{ fontSize: 28, fontWeight: 700, color: NEAR_BLACK, marginTop: 4 }}>{k.value}</div>
+                  </div>
+                ))}
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+                {/* Lead funnel */}
+                <div className="chart-card">
+                  <div className="section-label">Funnel</div>
+                  <div style={{ fontSize: 17, fontWeight: 600, margin: "4px 0 12px" }}>Lead stages</div>
+                  <ResponsiveContainer width="100%" height={140}>
+                    <BarChart data={leadFunnel} barSize={36}>
+                      <XAxis dataKey="stage" tick={{ fontSize: 11, fill: MUTED }} axisLine={false} tickLine={false} />
+                      <YAxis tick={{ fontSize: 11, fill: MUTED }} axisLine={false} tickLine={false} />
+                      <Tooltip contentStyle={ttStyle} />
+                      <Bar dataKey="count" radius={[4, 4, 0, 0]}>
+                        {leadFunnel.map((_, i) => <Cell key={i} fill={i === leadFunnel.length - 1 ? "#30D158" : BLUE} />)}
+                      </Bar>
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+                {/* Demos per lead */}
+                <div className="chart-card">
+                  <div className="section-label">Repeat demos</div>
+                  <div style={{ fontSize: 17, fontWeight: 600, margin: "4px 0 12px" }}>Demos per lead</div>
+                  <ResponsiveContainer width="100%" height={140}>
+                    <BarChart data={demosPerLeadDist} barSize={48}>
+                      <XAxis dataKey="name" tick={{ fontSize: 11, fill: MUTED }} axisLine={false} tickLine={false} />
+                      <YAxis tick={{ fontSize: 11, fill: MUTED }} axisLine={false} tickLine={false} />
+                      <Tooltip contentStyle={ttStyle} />
+                      <Bar dataKey="count" fill={BLUE} radius={[4, 4, 0, 0]} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
+            </>
+          )}
         </div>
       </section>
 

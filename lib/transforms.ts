@@ -1,4 +1,8 @@
-import { POUR_CATS, type Demo, type PourIssue, type WorkflowStage } from "./types";
+import { POUR_CATS, type Demo, type Lead, type PourIssue, type WorkflowStage } from "./types";
+
+export type LeadRow = {
+  lead_number: string;
+};
 
 // ─── DB row shapes ───────────────────────────────────────────
 
@@ -59,6 +63,9 @@ export type DemoRow = {
   accountability_final_by: string | null;
   created_at: string;
   updated_at: string;
+  lead_id: number | null;
+  // PostgREST join shape when querying with `leads ( lead_number )`
+  leads: LeadRow | null;
   pour_issues?: PourIssueRow[];
   demo_accountability?: AccountabilityRow[];
 };
@@ -129,6 +136,30 @@ export function dbRowToDemo(row: DemoRow): Demo {
     feedbackPositiveEnvComment: row.feedback_positive_env_comment ?? "",
     feedbackSuggestions: row.feedback_suggestions ?? "",
     feedbackComments: row.feedback_comments ?? "",
+    leadId: row.lead_id ?? null,
+    leadNumber: row.leads?.lead_number ?? null,
+  };
+}
+
+// ─── LeadRow → Lead ───────────────────────────────────────────
+
+export type RawLeadRow = {
+  id: number;
+  lead_number: string;
+  student_name: string;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export function dbRowToLead(row: RawLeadRow): Lead {
+  return {
+    id: Number(row.id),
+    leadNumber: row.lead_number,
+    studentName: row.student_name,
+    createdBy: row.created_by ?? null,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
   };
 }
 
@@ -188,6 +219,7 @@ export function demoToInsertRow(d: Demo): Record<string, unknown> {
     feedback_positive_env_comment: d.feedbackPositiveEnvComment ?? "",
     feedback_suggestions: d.feedbackSuggestions ?? "",
     feedback_comments: d.feedbackComments ?? "",
+    lead_id: d.leadId ?? null,
   };
 }
 
@@ -244,6 +276,7 @@ export function demoUpdatesToDb(partial: Partial<Demo>): Record<string, unknown>
   if ("feedbackPositiveEnvComment" in partial) out.feedback_positive_env_comment = partial.feedbackPositiveEnvComment ?? "";
   if ("feedbackSuggestions" in partial) out.feedback_suggestions = partial.feedbackSuggestions ?? "";
   if ("feedbackComments" in partial) out.feedback_comments = partial.feedbackComments ?? "";
+  if ("leadId" in partial) out.lead_id = partial.leadId ?? null;
   return out;
 }
 
