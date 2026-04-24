@@ -18,7 +18,7 @@ export default function AnalystReviewPage({
 }) {
   const { id } = use(params);
   const demoId = Number(id);
-  const { demos, draftsByDemoId, fetchDraft, triggerAnalyze, triggerProcessRecording, flash, user, setDemos, setConfirm, logActivity } = useStore();
+  const { demos, draftsByDemoId, fetchDraft, triggerAnalyze, triggerProcessRecording, flash, user, confirmDeleteDemo } = useStore();
   const router = useRouter();
   const [draft, setDraft] = useState<DemoDraft | null>(
     () => draftsByDemoId[demoId] ?? null
@@ -102,16 +102,7 @@ export default function AnalystReviewPage({
 
   const handleDelete = () => {
     if (!demo) return;
-    setConfirm({
-      title: `Delete demo for ${demo.student}?`,
-      msg: "This permanently removes the demo, its POUR issues, AI scorecard draft, accountability record, and any pending processing tasks. This cannot be undone.",
-      onConfirm: () => {
-        setDemos((prev) => prev.filter((d) => d.id !== demoId));
-        logActivity("deleted", `Demo ${demoId} · ${demo.student}`);
-        flash("Demo deleted");
-        router.push("/");
-      },
-    });
+    confirmDeleteDemo(demo, { onAfterDelete: () => router.push("/") });
   };
 
   if (!demo) {

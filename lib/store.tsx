@@ -75,6 +75,7 @@ interface StoreContextType {
   setConfirm: (
     c: { title: string; msg: string; onConfirm: () => void } | null
   ) => void;
+  confirmDeleteDemo: (demo: Demo, opts?: { onAfterDelete?: () => void }) => void;
   loading: boolean;
   user: UserProfile | null;
   salesAgents: UserProfile[];
@@ -1067,6 +1068,22 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     [flash]
   );
 
+  const confirmDeleteDemo = useCallback(
+    (demo: Demo, opts?: { onAfterDelete?: () => void }) => {
+      setConfirm({
+        title: `Delete demo for ${demo.student}?`,
+        msg: "This permanently removes the demo, its POUR issues, AI scorecard draft, accountability record, and any pending processing tasks. This cannot be undone.",
+        onConfirm: () => {
+          setDemos((prev) => prev.filter((d) => d.id !== demo.id));
+          logActivity("deleted", `Demo ${demo.id} · ${demo.student}`);
+          flash("Demo deleted");
+          opts?.onAfterDelete?.();
+        },
+      });
+    },
+    [setDemos, logActivity, flash]
+  );
+
   // ─── Derived memos ────────────────────────────────────────────
   const rangedDemos = useMemo(
     () => demos.filter((d) => !d.isDraft && inDateRange(d.date, dateRange)),
@@ -1187,6 +1204,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         rejectDraft,
         finalizeAccountability,
         clearAccountability,
+        confirmDeleteDemo,
         processingDemoIds,
         approvedSessions,
         teacherSessions,

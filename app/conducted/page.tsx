@@ -63,7 +63,7 @@ function toOpts(arr: string[]) {
 }
 
 export default function ConductedPage() {
-  const { rangedDemos, draftsByDemoId, salesAgents, approvedTeachers } = useStore();
+  const { rangedDemos, draftsByDemoId, salesAgents, approvedTeachers, user, confirmDeleteDemo } = useStore();
 
   // Primary filters (LIGHT_GRAY hero)
   const [fStatus, setFStatus]   = useState("all");
@@ -664,9 +664,22 @@ export default function ConductedPage() {
                           )}
                         </td>
                         <td style={{ padding: "9px 12px" }} onClick={(e) => e.stopPropagation()}>
-                          <Link href={`/analyst/${d.id}`} style={{ color: BLUE, textDecoration: "none", fontWeight: 500 }}>
-                            View →
-                          </Link>
+                          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                            <Link href={`/analyst/${d.id}`} style={{ color: BLUE, textDecoration: "none", fontWeight: 500 }}>
+                              View →
+                            </Link>
+                            {user?.role === "manager" && (
+                              <button
+                                type="button"
+                                onClick={() => confirmDeleteDemo(d)}
+                                className="pill pill-outline"
+                                style={{ fontSize: 11, padding: "3px 10px", color: "#B42318", borderColor: "#FDA29B" }}
+                                title="Delete demo"
+                              >
+                                Delete
+                              </button>
+                            )}
+                          </div>
                         </td>
                       </tr>
                     );

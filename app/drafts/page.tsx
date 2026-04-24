@@ -8,7 +8,8 @@ import { LIGHT_GRAY, MUTED, NEAR_BLACK, type DemoDraft } from "@/lib/types";
 import { interpretationBadge, Q_KEYS } from "@/lib/scorecard";
 
 export default function DraftsPage() {
-  const { draftsByDemoId, demos } = useStore();
+  const { draftsByDemoId, demos, user, confirmDeleteDemo } = useStore();
+  const canDelete = user?.role === "manager";
 
   // Latest pending-review AI draft per demo, newest first by created_at.
   const aiQueue = useMemo(() => {
@@ -71,8 +72,15 @@ export default function DraftsPage() {
             ) : (
               <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
                 {salesQueue.map((demo) => (
-                  <Link
+                  <div
                     key={demo.id}
+                    style={{
+                      display: "flex",
+                      alignItems: "stretch",
+                      gap: 8,
+                    }}
+                  >
+                  <Link
                     href={`/analyst/${demo.id}`}
                     style={{
                       display: "flex",
@@ -89,6 +97,8 @@ export default function DraftsPage() {
                       color: "inherit",
                       cursor: "pointer",
                       transition: "background 0.15s",
+                      flex: 1,
+                      minWidth: 0,
                     }}
                   >
                     <div style={{ display: "flex", alignItems: "center", gap: 12, minWidth: 0, flex: 1 }}>
@@ -130,6 +140,18 @@ export default function DraftsPage() {
                       Awaiting review
                     </span>
                   </Link>
+                    {canDelete && (
+                      <button
+                        type="button"
+                        onClick={() => confirmDeleteDemo(demo)}
+                        className="pill pill-outline"
+                        style={{ fontSize: 11, padding: "3px 12px", color: "#B42318", borderColor: "#FDA29B", alignSelf: "center" }}
+                        title="Delete demo"
+                      >
+                        Delete
+                      </button>
+                    )}
+                  </div>
                 ))}
               </div>
             )}
@@ -165,8 +187,15 @@ export default function DraftsPage() {
                   const badge = interpretationBadge(total);
                   const studentName = demo?.student ?? `Demo ${draft.demo_id}`;
                   return (
-                    <Link
+                    <div
                       key={draft.id}
+                      style={{
+                        display: "flex",
+                        alignItems: "stretch",
+                        gap: 8,
+                      }}
+                    >
+                    <Link
                       href={`/analyst/${draft.demo_id}`}
                       style={{
                         display: "flex",
@@ -182,6 +211,8 @@ export default function DraftsPage() {
                         color: "inherit",
                         cursor: "pointer",
                         transition: "background 0.15s",
+                        flex: 1,
+                        minWidth: 0,
                       }}
                     >
                       <div style={{ display: "flex", alignItems: "center", gap: 12, minWidth: 0, flex: 1 }}>
@@ -230,6 +261,18 @@ export default function DraftsPage() {
                         </span>
                       </div>
                     </Link>
+                      {canDelete && demo && (
+                        <button
+                          type="button"
+                          onClick={() => confirmDeleteDemo(demo)}
+                          className="pill pill-outline"
+                          style={{ fontSize: 11, padding: "3px 12px", color: "#B42318", borderColor: "#FDA29B", alignSelf: "center" }}
+                          title="Delete demo"
+                        >
+                          Delete
+                        </button>
+                      )}
+                    </div>
                   );
                 })}
               </div>

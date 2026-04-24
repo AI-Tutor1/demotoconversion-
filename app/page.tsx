@@ -19,6 +19,7 @@ export default function DashboardPage() {
     triggerAnalyze,
     triggerProcessRecording,
     flash,
+    confirmDeleteDemo,
   } = useStore();
   const [retryingId, setRetryingId] = useState<number | null>(null);
 
@@ -236,6 +237,17 @@ export default function DashboardPage() {
                       </button>
                     )}
                     <StatusBadge status={d.status} />
+                    {user?.role === "manager" && (
+                      <button
+                        type="button"
+                        onClick={() => confirmDeleteDemo(d)}
+                        className="pill pill-outline"
+                        style={{ fontSize: 11, padding: "3px 10px", color: "#B42318", borderColor: "#FDA29B" }}
+                        title="Delete demo"
+                      >
+                        Delete
+                      </button>
+                    )}
                   </div>
                 </div>
               );
