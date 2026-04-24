@@ -20,6 +20,7 @@ This project implements an Apple-inspired design system. Every UI decision must 
 | Light Gray | `#f5f5f7` | `LIGHT_GRAY` | Section backgrounds, input backgrounds |
 | Muted | `#86868b` | `MUTED` | Secondary text, labels, captions |
 | Card Dark | `#1c1c1e` | `CARD_DARK` | Dark card backgrounds (agent leaderboard) |
+| Tuitional Sky | `#38b6ff` | — | Global nav bar background **only**. Brand colour for the chrome — not a component accent. Do not reuse on buttons, links, KPIs, or charts; that's still `#0071e3` per the "Apple Blue is the only accent" rule. |
 
 ### Status Colors
 | Status | Background | Text | Dot |
@@ -168,18 +169,19 @@ Shadows are used sparingly. The design is intentionally flat.
 
 ## Navigation
 
-### Glass Effect
+### Solid Brand Bar
 ```css
-background: rgba(0, 0, 0, 0.85);
-backdrop-filter: saturate(180%) blur(20px);
--webkit-backdrop-filter: saturate(180%) blur(20px);
+background: #38b6ff;
 ```
+The nav bar is the Tuitional brand chrome. Solid sky-blue (no glass / no backdrop-filter — those were the old dark-bar treatment).
 
 ### Nav Links
-- Default: `color: rgba(255,255,255,.7); font-weight: 400; font-size: 12px`
-- Hover: `color: #fff`
-- Active: `color: #fff; font-weight: 600`
+- Default: `color: #1d1d1f; font-weight: 400; font-size: 12px`
+- Hover: `color: #000`
+- Active: `color: #1d1d1f; font-weight: 600`
 - Height: `line-height: 48px` (matches nav bar height)
+- Icon strokes (search, bell) are `#1d1d1f` for legibility on the sky-blue bar.
+- User-initial badge: white circle (`background: #fff`) with `#1d1d1f` initial — avoids muddy two-blue stack against the bar.
 
 ## Animations
 

@@ -157,6 +157,7 @@ The 12 seed demos in `lib/data.ts` were intentionally designed to test edge case
 - **Source:** `https://github.com/VoltAgent/awesome-design-md/blob/main/design-md/apple/DESIGN.md`
 - **Key tokens applied:** SF Pro system fonts, Apple Blue (#0071e3) as singular accent, glass navigation (backdrop-filter blur), alternating black/light-gray sections, pill CTAs (980px radius), negative letter-spacing
 - **GUARDRAIL:** See DESIGN.md for the complete token reference. Never introduce a second accent color. Never use gradients.
+- **2026-04-25 amendment — nav rebrand:** The glass navigation was replaced with a solid Tuitional sky-blue (`#38b6ff`) bar carrying the Tuitional logo (`/public/tuitional-logo.svg`), near-black text/icons, and a white user-initial badge. The Apple-Blue-only-accent rule still holds for **components** (buttons, links, KPIs, charts) — `#38b6ff` is brand chrome reserved for the nav bar. See DESIGN.md → Core Tokens "Tuitional Sky" row and §Solid Brand Bar.
 
 ---
 

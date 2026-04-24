@@ -6,7 +6,6 @@ import { usePathname, useRouter } from "next/navigation";
 import { useStore } from "@/lib/store";
 import { supabase } from "@/lib/supabase";
 import { MUTED } from "@/lib/types";
-import { exportCSV } from "@/lib/utils";
 
 type NavRole = "analyst" | "sales_agent" | "manager" | "hr";
 
@@ -28,8 +27,7 @@ const NAV_ITEMS: { label: string; href: string; roles?: NavRole[] }[] = [
 export default function Nav() {
   const pathname = usePathname();
   const router = useRouter();
-  const { dateRange, setDateRange, notifications, rangedDemos, user, demos } =
-    useStore();
+  const { dateRange, setDateRange, notifications, user, demos } = useStore();
   const [notifOpen, setNotifOpen] = useState(false);
   const [userOpen, setUserOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
@@ -95,10 +93,12 @@ export default function Nav() {
     <>
       <nav className="nav-bar">
         <div className="nav-inner">
-          {/* Apple logo */}
-          <svg width="14" height="17" viewBox="0 0 17 21" fill="#fff" style={{ marginRight: 16, flexShrink: 0 }}>
-            <path d="M15.5 17.4c-.8 1.2-1.7 2.4-3 2.4-1.3 0-1.7-.8-3.2-.8s-2 .8-3.2.8c-1.3 0-2.3-1.3-3.1-2.5C1.2 14.6.2 11 1.5 8.6c.9-1.6 2.4-2.7 4-2.7 1.3 0 2.3.9 3.1.9.8 0 2-.9 3.4-.8.6 0 2.2.2 3.2 1.7-2.8 1.7-2.3 5.9.3 7.1zM12 3.6c.7-.9 1.2-2.1 1.1-3.3-1.1.1-2.3.7-3.1 1.6-.7.8-1.3 2-1.1 3.2 1.2.1 2.3-.6 3.1-1.5z" />
-          </svg>
+          {/* Tuitional logo */}
+          <img
+            src="/tuitional-logo.svg"
+            alt="Tuitional"
+            style={{ height: 24, width: "auto", marginRight: 16, flexShrink: 0 }}
+          />
 
           {/* Nav links (filtered to current user's role) */}
           <div style={{ display: "flex", alignItems: "center", flex: 1, overflow: "auto", scrollbarWidth: "none" }}>
@@ -134,7 +134,7 @@ export default function Nav() {
               onClick={() => { setSearchOpen(true); setSearchQ(""); }}
               className="nav-icon-btn"
             >
-              <svg width="15" height="15" fill="none" stroke="rgba(255,255,255,.7)" strokeWidth="1.5">
+              <svg width="15" height="15" fill="none" stroke="#1d1d1f" strokeWidth="1.5">
                 <circle cx="6.5" cy="6.5" r="5" />
                 <line x1="10" y1="10" x2="14" y2="14" strokeLinecap="round" />
               </svg>
@@ -143,7 +143,7 @@ export default function Nav() {
             {/* Notifications */}
             <div ref={notifRef} style={{ position: "relative" }}>
               <button onClick={() => setNotifOpen((p) => !p)} className="nav-icon-btn" style={{ position: "relative" }}>
-                <svg width="15" height="15" fill="none" stroke="rgba(255,255,255,.7)" strokeWidth="1.5">
+                <svg width="15" height="15" fill="none" stroke="#1d1d1f" strokeWidth="1.5">
                   <path d="M7.5 1a4 4 0 014 4c0 2.7 1.5 3.5 1.5 3.5H2S3.5 7.7 3.5 5a4 4 0 014-4zM6 12a1.5 1.5 0 003 0" strokeLinecap="round" />
                 </svg>
                 {notifications.length > 0 && <span className="notif-badge">{notifications.length}</span>}
@@ -170,17 +170,6 @@ export default function Nav() {
               )}
             </div>
 
-            {/* Export */}
-            <button
-              onClick={() => exportCSV(rangedDemos as unknown as Record<string, unknown>[])}
-              className="nav-icon-btn"
-              title="Export CSV"
-            >
-              <svg width="15" height="15" fill="none" stroke="rgba(255,255,255,.7)" strokeWidth="1.5" strokeLinecap="round">
-                <path d="M7.5 2v8M4 7l3.5 3 3.5-3M2 12h11" />
-              </svg>
-            </button>
-
             {/* User menu */}
             {user && (
               <div ref={userRef} style={{ position: "relative", marginLeft: 4 }}>
@@ -191,8 +180,8 @@ export default function Nav() {
                     width: 32,
                     height: 32,
                     borderRadius: "50%",
-                    background: "#0071e3",
-                    color: "#fff",
+                    background: "#fff",
+                    color: "#1d1d1f",
                     border: "none",
                     cursor: "pointer",
                     fontSize: 13,

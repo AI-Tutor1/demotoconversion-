@@ -132,7 +132,7 @@ UNDERSTAND → LOCATE → PLAN → IMPLEMENT → VERIFY → REPORT
 │       ├── page.tsx              # Product Review: session CSV upload + table + status
 │       └── [id]/page.tsx         # Product Review: session detail + AI scorecard
 ├── components/
-│   ├── nav.tsx                   # Glass nav, search, notifications, user menu
+│   ├── nav.tsx                   # Tuitional brand nav (#38b6ff bar + logo), search, notifications, user menu
 │   ├── ui.tsx                    # StatusBadge, Field, Stars, EmptyState, SectionHeader
 │   ├── toast-confirm.tsx         # Toast + confirm modal
 │   ├── csv-upload.tsx            # Reusable CSV file upload button
