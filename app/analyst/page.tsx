@@ -46,6 +46,7 @@ function AnalystForm() {
     recording: "",
     leadId: "",
     createNewLead: false,
+    newLeadNumber: "",
   };
   const [f, setF] = useState(blank);
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -72,6 +73,7 @@ function AnalystForm() {
     if (!f.teacher) e.teacher = "Required";
     if (!f.student || f.student.length < 2) e.student = "Min 2 characters";
     if (!f.leadId && !f.createNewLead) e.lead = "Select an existing lead or create a new one";
+    if (f.createNewLead && !f.newLeadNumber.trim()) e.lead = "Enter a lead number";
     if (!f.level) e.level = "Required";
     if (!f.grade) e.grade = "Required";
     if (!f.subject) e.subject = "Required";
@@ -116,7 +118,7 @@ function AnalystForm() {
     let resolvedLeadId: number | null = null;
     let resolvedLeadNumber: string | null = null;
     if (f.createNewLead) {
-      const leadResult = await createLead(f.student);
+      const leadResult = await createLead(f.student, f.newLeadNumber.trim() || undefined);
       if (!leadResult.ok) {
         flash(`Failed to create lead: ${leadResult.error}`);
         setSubmitting(false);
@@ -258,9 +260,17 @@ function AnalystForm() {
               options={leadOptions}
             />
             {f.createNewLead && (
-              <p style={{ fontSize: 11, color: MUTED, marginTop: 4 }}>
-                A new lead will be created for &quot;{f.student || "this student"}&quot; on submit.
-              </p>
+              <input
+                className={"apple-input" + (errors.lead ? " error" : "")}
+                style={{ marginTop: 8 }}
+                placeholder="Lead number (e.g. LN-0001)"
+                value={f.newLeadNumber}
+                onChange={(e) => {
+                  setF ((p) => ({ ...p, newLeadNumber: e.target.value }));
+                  setErrors((p) => ({ ...p, lead: "" }));
+                }}
+                autoFocus
+              />
             )}
           </Field>
 

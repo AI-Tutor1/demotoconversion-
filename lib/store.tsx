@@ -121,7 +121,7 @@ interface StoreContextType {
   ) => Promise<{ ok: true } | { ok: false; error: string }>;
   processHrRecording: (profileId: string) => Promise<{ ok: true } | { ok: false; error: string }>;
   leads: Lead[];
-  createLead: (studentName: string) => Promise<CreateLeadResult>;
+  createLead: (studentName: string, leadNumber?: string) => Promise<CreateLeadResult>;
   stats: {
     total: number;
     converted: number;
@@ -982,9 +982,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
   // ─── Lead creation ────────────────────────────────────────────
   const createLead = useCallback(
-    async (studentName: string): Promise<CreateLeadResult> => {
+    async (studentName: string, leadNumber?: string): Promise<CreateLeadResult> => {
       const { data, error } = await supabase.rpc("create_lead", {
         p_student_name: studentName,
+        p_lead_number: leadNumber ?? null,
       });
       if (error) return { ok: false, error: error.message };
       const r = data as { id: number; lead_number: string };
