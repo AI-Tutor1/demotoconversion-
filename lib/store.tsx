@@ -76,6 +76,7 @@ interface StoreContextType {
     c: { title: string; msg: string; onConfirm: () => void } | null
   ) => void;
   confirmDeleteDemo: (demo: Demo, opts?: { onAfterDelete?: () => void }) => void;
+  confirmBulkDeleteDemos: (demos: Demo[], opts?: { onAfterDelete?: () => void }) => void;
   confirmDeleteSession: (
     sessionId: number,
     label: string,
@@ -100,8 +101,10 @@ interface StoreContextType {
   clearAccountability: (demoId: number) => Promise<{ ok: true } | { ok: false; error: string }>;
   processingDemoIds: Set<number>;
   approvedSessions: ApprovedSession[];
+  rangedApprovedSessions: ApprovedSession[];
   teacherSessions: TeacherSession[];
   sessionTeachers: { teacherUserName: string; teacherUserId: string | null }[];
+  reviewerNames: Record<string, string>;
   // HR / Teacher onboarding
   teacherProfiles: TeacherProfile[];
   approvedTeachers: TeacherProfile[];
@@ -158,6 +161,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const [approvedSessions, setApprovedSessions] = useState<ApprovedSession[]>([]);
   const [teacherSessions, setTeacherSessions] = useState<TeacherSession[]>([]);
   const [sessionTeachers, setSessionTeachers] = useState<{ teacherUserName: string; teacherUserId: string | null }[]>([]);
+  const [reviewerNames, setReviewerNames] = useState<Record<string, string>>({});
   const [teacherProfiles, setTeacherProfiles] = useState<TeacherProfile[]>([]);
   const [leads, setLeads] = useState<Lead[]>([]);
 
@@ -262,7 +266,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     const { data, error } = await supabase
       .from("sessions")
       .select(
-        "*, session_drafts!inner ( draft_data, status, reviewed_at )"
+        "*, session_drafts!inner ( draft_data, status, reviewed_at, reviewed_by, approval_rate )"
       )
       .eq("processing_status", "approved")
       .in("session_drafts.status", ["approved", "partially_edited"])
@@ -348,6 +352,24 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     setProcessingDemoIds(ids);
   }, []);
 
+  // Analyst + manager name lookup for the session-reviewer leaderboard. Maps
+  // session_drafts.reviewed_by (UUID) → full_name. One-shot; refreshed on sign-in.
+  const fetchReviewers = useCallback(async (role: UserProfile["role"] | null) => {
+    if (role !== "analyst" && role !== "manager") {
+      setReviewerNames({});
+      return;
+    }
+    const { data } = await supabase
+      .from("users")
+      .select("id, full_name")
+      .in("role", ["analyst", "manager"]);
+    const map: Record<string, string> = {};
+    for (const row of (data ?? []) as { id: string; full_name: string | null }[]) {
+      if (row.id) map[row.id] = row.full_name ?? "Unknown";
+    }
+    setReviewerNames(map);
+  }, []);
+
   const syncUserProfile = useCallback(async () => {
     const {
       data: { user: authUser },
@@ -366,15 +388,17 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       fetchApprovedSessions(null);
       fetchTeacherSessions(null);
       fetchSessionTeachers(null);
+      fetchReviewers(null);
     } else {
       const profile = profileRes.data as UserProfile;
       setUser(profile);
       fetchApprovedSessions(profile.role);
       fetchTeacherSessions(profile.role);
       fetchSessionTeachers(profile.role);
+      fetchReviewers(profile.role);
     }
     setSalesAgents((agentsRes.data as UserProfile[] | null) ?? []);
-  }, [fetchApprovedSessions, fetchTeacherSessions, fetchSessionTeachers]);
+  }, [fetchApprovedSessions, fetchTeacherSessions, fetchSessionTeachers, fetchReviewers]);
 
   useEffect(() => {
     const { data } = supabase.auth.onAuthStateChange((event) => {
@@ -399,6 +423,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         setApprovedSessions([]);
         setTeacherSessions([]);
         setSessionTeachers([]);
+        setReviewerNames({});
         setTeacherProfiles([]);
         setLoading(false);
       }
@@ -1089,6 +1114,25 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     [setDemos, logActivity, flash]
   );
 
+  const confirmBulkDeleteDemos = useCallback(
+    (demos: Demo[], opts?: { onAfterDelete?: () => void }) => {
+      if (demos.length === 0) return;
+      const n = demos.length;
+      setConfirm({
+        title: `Delete ${n} demo${n === 1 ? "" : "s"}?`,
+        msg: "This permanently removes the demos, their POUR issues, AI scorecard drafts, accountability records, and any pending processing tasks. This cannot be undone.",
+        onConfirm: () => {
+          const ids = new Set(demos.map((d) => d.id));
+          setDemos((prev) => prev.filter((d) => !ids.has(d.id)));
+          logActivity("deleted", `${n} demo${n === 1 ? "" : "s"} (bulk)`);
+          flash(`${n} demo${n === 1 ? "" : "s"} deleted`);
+          opts?.onAfterDelete?.();
+        },
+      });
+    },
+    [setDemos, logActivity, flash]
+  );
+
   const confirmDeleteSession = useCallback(
     (sessionId: number, label: string, opts?: { onAfterDelete?: () => void }) => {
       setConfirm({
@@ -1113,6 +1157,17 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const rangedDemos = useMemo(
     () => demos.filter((d) => !d.isDraft && inDateRange(d.date, dateRange)),
     [demos, dateRange]
+  );
+
+  // Date-range-filtered approved sessions — mirror of rangedDemos for the
+  // Sessions analytics tab. Sessions without a session_date are excluded;
+  // they can't participate in a date-range chart anyway.
+  const rangedApprovedSessions = useMemo(
+    () =>
+      approvedSessions.filter((s) =>
+        s.sessionDate ? inDateRange(s.sessionDate, dateRange) : false
+      ),
+    [approvedSessions, dateRange]
   );
 
   const notifications = useMemo(() => {
@@ -1230,11 +1285,14 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         finalizeAccountability,
         clearAccountability,
         confirmDeleteDemo,
+        confirmBulkDeleteDemos,
         confirmDeleteSession,
         processingDemoIds,
         approvedSessions,
+        rangedApprovedSessions,
         teacherSessions,
         sessionTeachers,
+        reviewerNames,
         leads,
         createLead,
         teacherProfiles,

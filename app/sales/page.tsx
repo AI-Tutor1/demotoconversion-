@@ -65,7 +65,7 @@ function toOpts(arr: string[]) {
 // ─── Page ─────────────────────────────────────────────────────────
 
 export default function SalesPage() {
-  const { rangedDemos, setDemos, flash, setConfirm, logActivity, salesAgents, draftsByDemoId, approvedTeachers, user, confirmDeleteDemo } = useStore();
+  const { rangedDemos, setDemos, flash, setConfirm, logActivity, salesAgents, draftsByDemoId, approvedTeachers, user, confirmDeleteDemo, confirmBulkDeleteDemos } = useStore();
   const [selDemo, setSelDemo] = useState<number | null>(null);
   const [bulkSel, setBulkSel] = useState<number[]>([]);
 
@@ -280,6 +280,18 @@ export default function SalesPage() {
           <span>{bulkSel.length} selected</span>
           <button className="pill" onClick={() => bulkUpdate("Converted")} style={{ background: "#fff", color: BLUE, padding: "5px 14px", fontSize: 12, border: "none" }}>Mark converted</button>
           <button className="pill" onClick={() => bulkUpdate("Not Converted")} style={{ background: "rgba(255,255,255,.2)", color: "#fff", padding: "5px 14px", fontSize: 12, border: "none" }}>Mark not converted</button>
+          {user?.role === "manager" && (
+            <button
+              className="pill"
+              onClick={() => {
+                const toDelete = filtered.filter((d) => bulkSel.includes(d.id));
+                confirmBulkDeleteDemos(toDelete, { onAfterDelete: () => setBulkSel([]) });
+              }}
+              style={{ background: "#fff", color: "#B42318", padding: "5px 14px", fontSize: 12, border: "none" }}
+            >
+              Delete {bulkSel.length}
+            </button>
+          )}
           <button className="pill" onClick={() => setBulkSel([])} style={{ background: "transparent", color: "#fff", padding: "5px 14px", fontSize: 12, border: "1px solid rgba(255,255,255,.4)" }}>Clear</button>
         </div>
       )}

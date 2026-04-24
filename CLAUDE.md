@@ -208,8 +208,9 @@ const {
   flash,           // flash("Message") — toast for 3.5s
   logActivity,     // logActivity("converted", "Maryam", "Ahmed Khan")
   setConfirm,      // setConfirm({ title, msg, onConfirm }) — confirm modal
-  confirmDeleteDemo,    // confirmDeleteDemo(demo, { onAfterDelete? }) — manager hard-delete with confirm modal + cascade
-  confirmDeleteSession, // confirmDeleteSession(id, label, { onAfterDelete? }) — manager hard-delete on sessions table
+  confirmDeleteDemo,      // confirmDeleteDemo(demo, { onAfterDelete? }) — manager hard-delete with confirm modal + cascade
+  confirmBulkDeleteDemos, // confirmBulkDeleteDemos(demos, { onAfterDelete? }) — one modal, batched delete for bulk selections (/sales action bar)
+  confirmDeleteSession,   // confirmDeleteSession(id, label, { onAfterDelete? }) — manager hard-delete on sessions table
   notifications,   // Computed: pending demos aged 3+ days
   dateRange, setDateRange,
   loading,         // True during initial fetch
