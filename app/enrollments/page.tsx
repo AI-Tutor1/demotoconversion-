@@ -507,6 +507,8 @@ export default function EnrollmentsPage() {
                   <thead>
                     <tr>
                       <th>Enrollment ID</th>
+                      <th>Teacher User ID</th>
+                      <th>Student User ID</th>
                       <th>Teacher</th>
                       <th>Student</th>
                       <th>Subject</th>
@@ -525,6 +527,18 @@ export default function EnrollmentsPage() {
                       return (
                         <tr key={e.id} title={title}>
                           <td style={{ fontWeight: 500, fontSize: 13 }}>{e.enrollmentId}</td>
+                          <td
+                            title={e.teacherId || undefined}
+                            style={{ fontSize: 13, color: MUTED, whiteSpace: "nowrap" }}
+                          >
+                            {e.teacherId || "—"}
+                          </td>
+                          <td
+                            title={e.studentId || undefined}
+                            style={{ fontSize: 13, color: MUTED, whiteSpace: "nowrap" }}
+                          >
+                            {e.studentId || "—"}
+                          </td>
                           <td>{e.teacherName || "—"}</td>
                           <td>{e.studentName || "—"}</td>
                           <td>{e.subject || "—"}</td>

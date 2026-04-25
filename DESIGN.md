@@ -354,6 +354,7 @@ Drill-level state is prefixed `d*` (`dSearch`, `dSubject`, `dDateFrom`, …) to 
 - **`/teachers` "Has demos"** enables finding teachers that only exist in `sessions` with zero `demos` (or vice versa). See [memory/project_entities_loosely_coupled.md](...).
 - **`/sessions` "Teacher" dropdown** unions `teacher_user_name` ∪ `tutor_name` (different columns, overlapping reality). Same union for Student across `student_user_name` ∪ `expectedStudent1` ∪ `expectedStudent2`.
 - **`/sessions` body columns** — the three stable IDs (`enrollment_id`, `student_user_id`, `teacher_user_id`) render inline as `nowrap` muted cells immediately after `session_id`. On the detail page they appear as tiles in the hero metadata grid (after Session ID, before Grade). Missing values render `—` so rows/tiles don't collapse when the teacher-linkage trigger back-fills later.
+- **`/enrollments` body columns** — `teacher_user_id` and `student_user_id` render as `nowrap` muted cells between `enrollment_id` and the Teacher name (same treatment as `/sessions`). These are the **source** for the linkage that the sessions trigger denormalises onto each `sessions` row, so showing them here lets uploaders eyeball the LMS FK before any session ingest happens.
 - **`/teachers` drill option lists** (Subject, Grade, POUR) union demo-side and session-side values for the current teacher — so a subject the teacher only teaches via sessions still appears in the dropdown.
 
 ## Component Patterns
