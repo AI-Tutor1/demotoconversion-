@@ -785,6 +785,9 @@ export default function SessionsPage() {
                   <thead>
                     <tr>
                       <th>Session ID</th>
+                      <th>Enrollment ID</th>
+                      <th>Student User ID</th>
+                      <th>Teacher User ID</th>
                       <th>Tutor</th>
                       <th>Student</th>
                       <th>Subject</th>
@@ -804,6 +807,24 @@ export default function SessionsPage() {
                           >
                             {s.sessionId}
                           </Link>
+                        </td>
+                        <td
+                          title={s.enrollmentId || undefined}
+                          style={{ fontSize: 13, color: MUTED, whiteSpace: "nowrap" }}
+                        >
+                          {s.enrollmentId || "—"}
+                        </td>
+                        <td
+                          title={s.studentUserId ?? undefined}
+                          style={{ fontSize: 13, color: MUTED, whiteSpace: "nowrap" }}
+                        >
+                          {s.studentUserId ?? "—"}
+                        </td>
+                        <td
+                          title={s.teacherUserId ?? undefined}
+                          style={{ fontSize: 13, color: MUTED, whiteSpace: "nowrap" }}
+                        >
+                          {s.teacherUserId ?? "—"}
                         </td>
                         <td>{s.tutorName}</td>
                         <td>{s.expectedStudent1}</td>

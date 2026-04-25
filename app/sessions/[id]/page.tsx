@@ -161,7 +161,9 @@ export default function SessionDetailPage() {
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12, marginTop: 20 }}>
             {[
               { label: "Session ID", value: session.sessionId },
-              { label: "Enrollment", value: session.enrollmentId },
+              { label: "Enrollment ID", value: session.enrollmentId },
+              { label: "Student User ID", value: session.studentUserId },
+              { label: "Teacher User ID", value: session.teacherUserId },
               { label: "Grade", value: session.grade },
               { label: "Board", value: session.board },
               { label: "Curriculum", value: session.curriculum },
@@ -169,7 +171,12 @@ export default function SessionDetailPage() {
             ].map((item) => (
               <div key={item.label} style={{ background: "#fff", borderRadius: 10, padding: "10px 14px" }}>
                 <div className="section-label" style={{ marginBottom: 2 }}>{item.label}</div>
-                <div style={{ fontSize: 14, fontWeight: 500, color: NEAR_BLACK }}>{item.value || "—"}</div>
+                <div
+                  title={item.value || undefined}
+                  style={{ fontSize: 14, fontWeight: 500, color: NEAR_BLACK, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
+                >
+                  {item.value || "—"}
+                </div>
               </div>
             ))}
           </div>
