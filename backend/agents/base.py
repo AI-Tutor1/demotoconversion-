@@ -255,7 +255,10 @@ async def fetch_session(session_id: int) -> Optional[SessionRow]:
         sb = get_supabase()
         res = (
             sb.table("sessions")
-            .select("id, tutor_name, subject, grade, recording_link, enrollment_name")
+            .select(
+                "id, tutor_name, subject, grade, curriculum, board, "
+                "recording_link, enrollment_name"
+            )
             .eq("id", session_id)
             .limit(1)
             .execute()

@@ -78,10 +78,26 @@ async def analyze(
     started_at = datetime.now(timezone.utc)
     task_id = await base.record_task_start(demo_id, demo_analyst.AGENT_NAME)
 
-    # 4. Run agent — wrap in timeout; catch every recoverable error and mark the task
+    # 4. Build the AnalystContext from the demo row. The demo intake form
+    #    captures level + subject; topic_planned / learning_outcomes / curriculum
+    #    are not part of that form today, so they pass through as None and the
+    #    prompt renders them as "unknown".
+    ctx: demo_analyst.AnalystContext = {
+        "surface": "demo",
+        "transcript": demo.transcript,
+        "level": demo.level,
+        "subject": demo.subject,
+        "grade": None,
+        "curriculum": None,
+        "topic_planned": None,
+        "learning_outcomes": None,
+        "student_persona": None,
+    }
+
+    # 5. Run agent — wrap in timeout; catch every recoverable error and mark the task
     try:
         result = await asyncio.wait_for(
-            demo_analyst.run(demo_id, demo.transcript),
+            demo_analyst.run(demo_id, ctx),
             timeout=AGENT_TIMEOUT_SECONDS,
         )
     except asyncio.TimeoutError:

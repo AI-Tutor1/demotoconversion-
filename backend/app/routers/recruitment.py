@@ -52,6 +52,33 @@ async def _attempt_ingest(profile_id: str, recording_link: str):
     )
 
 
+def _build_hr_context(profile: dict, transcript: str) -> demo_analyst.AnalystContext:
+    """Pull level / subject / curriculum from the candidate's first
+    teaching_matrix entry (JSONB array of {level, subject, curriculum} —
+    see supabase/migrations/20260421000101_teacher_profiles.sql:25).
+
+    The HR interview surface is a sample lesson, so topic_planned is fixed
+    to 'Teacher demo lesson' and the curriculum field grounds the
+    teacher_knowledge_audit segment the user explicitly asked for on the
+    HR scorecard. Missing matrix → all metadata `None` and the prompt
+    falls back to "general subject knowledge"."""
+    matrix = profile.get("teaching_matrix") or []
+    first = matrix[0] if isinstance(matrix, list) and matrix else {}
+    if not isinstance(first, dict):
+        first = {}
+    return {
+        "surface": "hr_interview",
+        "transcript": transcript,
+        "level": (first.get("level") or None),
+        "grade": None,
+        "subject": (first.get("subject") or None),
+        "curriculum": (first.get("curriculum") or None),
+        "topic_planned": "Teacher demo lesson",
+        "learning_outcomes": None,
+        "student_persona": None,
+    }
+
+
 async def _run_hr_ingest_chain(profile_id: str, recording_link: str) -> None:
     """Background task: ingest (with one retry) → transcript save →
     demo_analyst (bootstrap) → hr_interview_drafts write → profile status='pending'.
@@ -106,13 +133,19 @@ async def _run_hr_ingest_chain(profile_id: str, recording_link: str) -> None:
     except Exception:  # noqa: BLE001
         pass
 
-    # Chain into analyst (v1 bootstrap uses demo_analyst's rubric)
+    # Chain into analyst (v1 bootstrap uses demo_analyst's rubric — the
+    # teacher_knowledge_audit field on the new prompt is what surfaces as
+    # the "knowledge relevancy" segment on the HR scorecard).
     analysis_task_id = await base.record_hr_task_start(profile_id, HR_ANALYST_AGENT_NAME)
     analysis_started_at = datetime.now(timezone.utc)
 
+    # Re-fetch the profile so any teaching_matrix edit during ingest is reflected.
+    chain_profile = await base.fetch_teacher_profile(profile_id) or {}
+    ctx = _build_hr_context(chain_profile, result.transcript)
+
     try:
         agent_result = await asyncio.wait_for(
-            demo_analyst.run(0, result.transcript),
+            demo_analyst.run(0, ctx),
             timeout=AGENT_TIMEOUT_SECONDS,
         )
         await base.upsert_hr_interview_draft(
@@ -227,9 +260,10 @@ async def analyze_hr_interview(
     started_at = datetime.now(timezone.utc)
     task_id = await base.record_hr_task_start(profile_id, HR_ANALYST_AGENT_NAME)
 
+    ctx = _build_hr_context(profile, draft["transcript"])
     try:
         result = await asyncio.wait_for(
-            demo_analyst.run(0, draft["transcript"]),
+            demo_analyst.run(0, ctx),
             timeout=AGENT_TIMEOUT_SECONDS,
         )
     except asyncio.TimeoutError:

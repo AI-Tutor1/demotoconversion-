@@ -1,6 +1,6 @@
 import logging
 from datetime import datetime
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -61,6 +61,57 @@ def _resolve_pour_category(raw: str) -> str | None:
 class PourIssue(BaseModel):
     category: str
     description: str
+    # The new prompt requires both of these on every entry. Kept Optional so
+    # historic draft_data rows (written before this field existed) still
+    # validate when an analyst re-opens them in the review drawer.
+    transcript_reference: Optional[str] = None
+    reasoning: Optional[str] = None
+
+
+class OutcomeCoverage(BaseModel):
+    outcome: str
+    covered: Literal["fully", "partially", "not_covered"]
+    evidence: str = ""
+
+
+class KnowledgeAuditEntry(BaseModel):
+    claim: str
+    timestamp: str
+    issue: Literal[
+        "factual_error",
+        "outdated",
+        "off_syllabus",
+        "imprecise",
+        "missing_prerequisite",
+        "ambiguous_terminology",
+    ]
+    correction: str
+    syllabus_reference: str = "general subject knowledge"
+    severity: Literal["low", "medium", "high"] = "low"
+
+
+class IdleGapObservation(BaseModel):
+    start: str
+    end: str
+    duration_seconds: int
+    note: str = ""
+
+
+class RepeatObservation(BaseModel):
+    timestamp: str
+    speaker: str
+    quote: str
+    interpretation: Literal["technical", "paralanguage", "comprehension", "unclear"] = "unclear"
+
+
+class ImprovementAction(BaseModel):
+    area: Literal[
+        "Methodology", "Curriculum", "Engagement", "Adaptation",
+        "Safety", "Opening", "Technical", "Assessment",
+        "Knowledge", "Time Management",
+    ]
+    observation: str
+    action: str
 
 
 class ScoreEvidence(BaseModel):
@@ -94,8 +145,23 @@ class DraftOutput(BaseModel):
     score_interpretation: str
     pour_issues: list[PourIssue]
     overall_summary: str
+    # Kept as a string for back-compat with `auto_approve_draft` which writes
+    # this verbatim into demos.suggestions (TEXT). The new structured per-area
+    # actions live on `improvement_actions` below.
     improvement_suggestions: str
     improvement_focus: str
+
+    # ─── Fields added with the 2026-04-27 prompt rewrite ──────────
+    # All Optional / default empty so historic draft_data rows decode unchanged.
+    topic_taught: Optional[str] = None
+    topic_planned_match: Optional[
+        Literal["match", "partial", "drift", "off_topic", "unknown"]
+    ] = None
+    learning_outcome_coverage: list[OutcomeCoverage] = Field(default_factory=list)
+    teacher_knowledge_audit: list[KnowledgeAuditEntry] = Field(default_factory=list)
+    idle_gaps_observed: list[IdleGapObservation] = Field(default_factory=list)
+    repeat_requests_observed: list[RepeatObservation] = Field(default_factory=list)
+    improvement_actions: list[ImprovementAction] = Field(default_factory=list)
 
     @field_validator("pour_issues", mode="before")
     @classmethod
@@ -212,12 +278,18 @@ class ProcessRecordingResponse(BaseModel):
 # ─── Product Review Workflow — Sessions ──────────────────────
 
 class SessionRow(BaseModel):
-    """Minimal shape of a sessions row the agents need."""
+    """Minimal shape of a sessions row the agents need.
+
+    Includes the curriculum/board metadata the QA Analyst prompt slots into
+    its SESSION CONTEXT block. Defaults to "" so legacy rows that pre-date
+    the column population still validate."""
 
     id: int
     tutor_name: str
     subject: str
     grade: str
+    curriculum: str = ""
+    board: str = ""
     recording_link: Optional[str] = None
     enrollment_name: str = ""
 

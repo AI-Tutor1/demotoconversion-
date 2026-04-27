@@ -61,6 +61,30 @@ def _fetch_session_transcript_sync(session_id: int) -> str | None:
     return None
 
 
+def _build_session_context(session, transcript: str) -> demo_analyst.AnalystContext:
+    """Pull curriculum/level/grade/subject straight off the SessionRow.
+
+    The session row already carries curriculum + board + grade + subject
+    (populated from the LMS CSV upload — see
+    supabase/migrations/20260416000100_create_enrollments_sessions.sql).
+    `topic_planned` and `learning_outcomes` are NOT first-class columns on
+    enrollments today; pass `None` and let the prompt render "unknown".
+    The session uses `grade` as the level proxy — there is no separate
+    `level` column on the LMS schema. `student_persona` stays None until
+    the persona agent ships."""
+    return {
+        "surface": "session",
+        "transcript": transcript,
+        "level": session.grade or None,
+        "grade": session.grade or None,
+        "subject": session.subject or None,
+        "curriculum": session.curriculum or None,
+        "topic_planned": None,
+        "learning_outcomes": None,
+        "student_persona": None,
+    }
+
+
 async def _attempt_ingest(session_id: int, recording_link: str):
     """Run ingest.run() with a 600s wrapper. Returns the IngestResult on
     success, or the Exception if it failed for a transient reason worth
@@ -133,9 +157,19 @@ async def _run_ingest_chain(session_id: int, recording_link: str) -> None:
     analysis_task_id = await base.record_session_task_start(session_id, demo_analyst.AGENT_NAME)
     analysis_started_at = datetime.now(timezone.utc)
 
+    # Re-fetch the session here so the analyst context reflects any LMS-CSV
+    # update that landed while the recording was being transcribed (rare, but
+    # cheap insurance for a 30-min ingest pipeline).
+    chain_session = await base.fetch_session(session_id)
+    if chain_session is None:
+        await base.record_task_failed(analysis_task_id, "Session vanished mid-pipeline")
+        await asyncio.to_thread(_update_session_status_sync, session_id, "failed")
+        return
+    ctx = _build_session_context(chain_session, result.transcript)
+
     try:
         agent_result = await asyncio.wait_for(
-            demo_analyst.run(session_id, result.transcript),
+            demo_analyst.run(session_id, ctx),
             timeout=AGENT_TIMEOUT_SECONDS,
         )
         await base.write_session_draft(
@@ -285,9 +319,10 @@ async def analyze_session(
     task_id = await base.record_session_task_start(session_id, demo_analyst.AGENT_NAME)
 
     # 5. Run agent
+    ctx = _build_session_context(session, transcript)
     try:
         result = await asyncio.wait_for(
-            demo_analyst.run(session_id, transcript),
+            demo_analyst.run(session_id, ctx),
             timeout=AGENT_TIMEOUT_SECONDS,
         )
     except asyncio.TimeoutError:
