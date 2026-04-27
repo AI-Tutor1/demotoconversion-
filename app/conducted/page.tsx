@@ -236,7 +236,11 @@ export default function ConductedPage() {
         <div className="animate-fade-up" style={{ maxWidth: 1200, margin: "0 auto", padding: "0 24px" }}>
           <p className="section-label">Master record</p>
           <h1 style={{ fontSize: 40, fontWeight: 600, lineHeight: 1.1 }}>Conducted demos.</h1>
-          <p style={{ fontSize: 15, color: MUTED, marginTop: 6 }}>{rangedDemos.length} demos conducted.</p>
+          <p style={{ fontSize: 15, color: MUTED, marginTop: 6 }}>
+            {filtered.length === rangedDemos.length
+              ? `${filtered.length} demo${filtered.length !== 1 ? "s" : ""} in range.`
+              : `${filtered.length} of ${rangedDemos.length} demos in range.`}
+          </p>
         </div>
 
         <div style={{ maxWidth: 1200, margin: "20px auto 0", padding: "0 24px", display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8 }}>

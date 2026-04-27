@@ -98,14 +98,14 @@ export default function DemosAnalytics() {
   const funnel = useMemo(() => {
     const t = demos.length;
     const reviewed = demos.filter((d) => d.review || d.analystRating > 0).length;
-    const contacted = demos.filter((d) => ["contacted", "converted", "lost"].includes(d.workflowStage)).length;
+    const contacted = demos.filter((d) => ["contacted", "converted", "lost"].includes(d.workflowStage ?? "")).length;
     const converted = demos.filter((d) => d.status === "Converted").length;
     return [{ stage: "Demos", count: t }, { stage: "Reviewed", count: reviewed }, { stage: "Contacted", count: contacted }, { stage: "Converted", count: converted }];
   }, [demos]);
 
   const subjectData = useMemo(() => {
     const m: Record<string, { name: string; total: number; conv: number }> = {};
-    demos.forEach((d) => { if (!m[d.subject]) m[d.subject] = { name: d.subject, total: 0, conv: 0 }; m[d.subject].total++; if (d.status === "Converted") m[d.subject].conv++; });
+    demos.forEach((d) => { const s = d.subject ?? "—"; if (!m[s]) m[s] = { name: s, total: 0, conv: 0 }; m[s].total++; if (d.status === "Converted") m[s].conv++; });
     return Object.values(m).sort((a, b) => b.total - a.total).slice(0, 8);
   }, [demos]);
 
@@ -129,7 +129,7 @@ export default function DemosAnalytics() {
       m.set(d.leadId!, {
         converted: prev.converted || d.status === "Converted",
         demoCount: prev.demoCount + 1,
-        contacted: prev.contacted || ["contacted", "converted", "lost"].includes(d.workflowStage),
+        contacted: prev.contacted || ["contacted", "converted", "lost"].includes(d.workflowStage ?? ""),
       });
     });
     return m;

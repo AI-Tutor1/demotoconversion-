@@ -1,5 +1,16 @@
 "use client";
 
+// Two universes of "draft" live on this page; do not conflate them with
+// /conducted or /analytics counts:
+//   • salesQueue  — rows in `demos` with isDraft=true. Sales-submitted, no
+//                    analyst review yet. Excluded from rangedDemos site-wide,
+//                    so they never appear on /conducted or /analytics.
+//   • aiQueue     — rows in `drafts` with status='pending_review'. AI scorecards
+//                    awaiting analyst sign-off; the underlying demo IS in
+//                    rangedDemos and DOES appear on /conducted and /analytics.
+// Both queues are deliberately all-time (no global dateRange filter) so
+// analysts never miss an old pending submission. Hero copy reflects this.
+
 import { useMemo } from "react";
 import Link from "next/link";
 import { useStore } from "@/lib/store";
@@ -12,11 +23,14 @@ export default function DraftsPage() {
   const canDelete = user?.role === "manager";
 
   // Latest pending-review AI draft per demo, newest first by created_at.
+  // Demos with isDraft=true are filtered out so a demo can never appear in
+  // both queues (belt-and-braces; the pipeline doesn't produce this today).
   const aiQueue = useMemo(() => {
     const demoById = new Map(demos.map((d) => [d.id, d]));
     return Object.values(draftsByDemoId)
       .filter((d): d is DemoDraft => !!d && d.status === "pending_review")
       .map((d) => ({ draft: d, demo: demoById.get(d.demo_id) ?? null }))
+      .filter(({ demo }) => !demo?.isDraft)
       .sort((a, b) => b.draft.created_at.localeCompare(a.draft.created_at));
   }, [draftsByDemoId, demos]);
 
@@ -38,7 +52,7 @@ export default function DraftsPage() {
           <p className="section-label">Pending review</p>
           <h1 style={{ fontSize: 40, fontWeight: 600, lineHeight: 1.1 }}>Draft queue.</h1>
           <p style={{ fontSize: 15, color: MUTED, marginTop: 6 }}>
-            {totalPending} item{totalPending === 1 ? "" : "s"} waiting for analyst review.
+            All-time queue · {totalPending} item{totalPending === 1 ? "" : "s"} waiting for analyst review.
           </p>
         </div>
       </section>
