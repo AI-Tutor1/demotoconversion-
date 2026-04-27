@@ -6,6 +6,8 @@ import { Stars, StatusBadge, EmptyState } from "@/components/ui";
 import { TeacherScorecard } from "@/components/teacher-scorecard";
 import { TeacherProductLog } from "@/components/teacher-product-log";
 import { SearchableSelect } from "@/components/searchable-select";
+import AddTeacherReviewDrawer from "@/components/add-teacher-review-drawer";
+import TeacherReviewCard from "@/components/teacher-review-card";
 import { LIGHT_GRAY, MUTED, BLUE, NEAR_BLACK, ACCT_TYPES, ACCT_FINAL_CATEGORIES, acctFinalLabel } from "@/lib/types";
 import { teacherFullName } from "@/lib/teacher-transforms";
 import type { TeacherSession } from "@/lib/types";
@@ -74,11 +76,14 @@ function toOpts(arr: string[]) {
 }
 
 export default function TeachersPage() {
-  const { rangedDemos: demos, draftsByDemoId, user, sessionTeachers, teacherSessions, approvedTeachers } = useStore();
+  const { rangedDemos: demos, draftsByDemoId, user, sessionTeachers, teacherSessions, approvedTeachers, teacherReviews, flash } = useStore();
   const [sortBy, setSortBy] = useState("rate-desc");
   const [drill, setDrill] = useState<string | null>(null);
   const [tab, setTab] = useState<TabKey>("dashboard");
+  const [addReviewOpen, setAddReviewOpen] = useState(false);
   const canSeeProductLog = user?.role === "analyst" || user?.role === "manager";
+  const canAddReview =
+    user?.role === "analyst" || user?.role === "manager" || user?.role === "hr";
 
   // ── outer grid filter state (collapsible panel) ──────────────────
   const [showFilters, setShowFilters] = useState(false);
@@ -363,6 +368,43 @@ export default function TeachersPage() {
     return { total, conv, rate, avg, pours, pourCats, acctFinalCounts, finalisedCount, awaitingCount };
   }, [drillData, filteredDemos]);
 
+  // Drill-filtered manual teacher reviews — for the Reviews tab. Filter
+  // by review_date (the date the review pertains to), not created_at.
+  // Subject/grade only narrow enrollment-scoped reviews; general reviews
+  // have empty subject/grade and would always be filtered out otherwise,
+  // so we only apply those filters when the review is enrollment-scoped.
+  // String reads null-coalesced per memory/feedback_filter_predicate_null_safety.md.
+  const manualReviewsForDrill = useMemo(() => {
+    if (!drillData) return [];
+    const q = dSearch.toLowerCase().trim();
+    const from = dDateFrom ? new Date(dDateFrom + "T00:00:00").getTime() : null;
+    const to   = dDateTo   ? new Date(dDateTo   + "T23:59:59").getTime() : null;
+    return teacherReviews
+      .filter((r) => r.teacherUserId === String(drillData.tid))
+      .filter((r) => {
+        if (r.reviewScope === "enrollment") {
+          if (dSubject && (r.subject ?? "") !== dSubject) return false;
+          if (dGrade   && (r.grade   ?? "") !== dGrade)   return false;
+        }
+        if (from !== null || to !== null) {
+          if (!r.reviewDate) return false;
+          const t = new Date(r.reviewDate + "T00:00:00").getTime();
+          if (Number.isNaN(t)) return false;
+          if (from !== null && t < from) return false;
+          if (to   !== null && t > to)   return false;
+        }
+        if (q) {
+          const hay = [
+            r.summary, r.improvementNotes, r.studentVerbatim,
+            r.studentUserName, r.subject, r.enrollmentId, r.createdByName,
+          ].filter(Boolean).join(" ").toLowerCase();
+          if (!hay.includes(q)) return false;
+        }
+        return true;
+      })
+      .sort((a, b) => b.reviewDate.localeCompare(a.reviewDate));
+  }, [drillData, teacherReviews, dSearch, dSubject, dGrade, dDateFrom, dDateTo]);
+
   // Session-side predicate — flows the drill filters into the Product log
   // tab via TeacherProductLog.filterFn. Demo-only fields (dDemoStatus,
   // dMinRating) are no-ops here. useCallback so the child's useMemo sees
@@ -621,7 +663,19 @@ export default function TeachersPage() {
                   <h3 style={{ fontSize: 24, fontWeight: 600 }}>{drillData.name}</h3>
                   <p style={{ fontSize: 13, color: MUTED, marginTop: 3 }}>{drillStats.total} demo{drillStats.total !== 1 ? "s" : ""} · {drillStats.rate}% conversion · {drillStats.avg}/5 avg</p>
                 </div>
-                <button onClick={() => setDrill(null)} style={{ background: LIGHT_GRAY, border: "none", borderRadius: "50%", width: 28, height: 28, cursor: "pointer", fontSize: 14, color: MUTED, display: "flex", alignItems: "center", justifyContent: "center" }}>{"\u2715"}</button>
+                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                  {canAddReview && (
+                    <button
+                      type="button"
+                      onClick={() => setAddReviewOpen(true)}
+                      className="pill pill-blue"
+                      style={{ padding: "6px 14px", fontSize: 12, fontWeight: 600, cursor: "pointer" }}
+                    >
+                      + Add review
+                    </button>
+                  )}
+                  <button onClick={() => setDrill(null)} style={{ background: LIGHT_GRAY, border: "none", borderRadius: "50%", width: 28, height: 28, cursor: "pointer", fontSize: 14, color: MUTED, display: "flex", alignItems: "center", justifyContent: "center" }}>{"\u2715"}</button>
+                </div>
               </div>
 
               {/* ── drill filter toolbar — applies to all 4 tabs ───── */}
@@ -1092,63 +1146,36 @@ export default function TeachersPage() {
                 </div>
               )}
 
-              {/* Tab 4: Reviews */}
+              {/* Tab 4: Reviews — manual reviews only (Product / Student / Excellence).
+                  Demo-derived feedback was removed 2026-04-27 by user request;
+                  it still appears on the Demo logs tab inside the analyst-review block. */}
               {tab === "reviews" && (
                 <div>
-                  <div className="section-label" style={{ marginBottom: 10 }}>Student & analyst feedback</div>
-                  {(() => {
-                    const reviewData = filteredDemos
-                      .filter((d) => d.review || d.verbatim || d.feedbackComments || d.feedbackSuggestions)
-                      .sort((a, b) => b.date.localeCompare(a.date));
-                    return reviewData.length === 0 ? (
-                      <EmptyState text="No reviews or feedback recorded" />
-                    ) : (
-                      reviewData.map((d) => (
-                        <div key={d.id} style={{
-                          background: "#fff", border: "1px solid #e8e8ed", borderRadius: 12,
-                          padding: "14px 18px", marginBottom: 10,
-                        }}>
-                          <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
-                            <div>
-                              <div style={{ fontSize: 14, fontWeight: 500 }}>{d.student}</div>
-                              <div style={{ fontSize: 11, color: MUTED }}>{d.date} · {d.level} {d.subject}</div>
-                            </div>
-                            <StatusBadge status={d.status} />
-                          </div>
-                          {d.review && (
-                            <div style={{ marginBottom: 8 }}>
-                              <div style={{ fontSize: 10, fontWeight: 600, color: MUTED, textTransform: "uppercase", marginBottom: 4 }}>Analyst review</div>
-                              <p style={{ fontSize: 13, lineHeight: 1.47, color: NEAR_BLACK, margin: 0 }}>{d.review}</p>
-                            </div>
-                          )}
-                          {d.verbatim && (
-                            <div style={{ marginBottom: 8 }}>
-                              <div style={{ fontSize: 10, fontWeight: 600, color: MUTED, textTransform: "uppercase", marginBottom: 4 }}>Student verbatim</div>
-                              <p style={{ fontSize: 13, lineHeight: 1.47, color: NEAR_BLACK, margin: 0, fontStyle: "italic" }}>&quot;{d.verbatim}&quot;</p>
-                            </div>
-                          )}
-                          {d.feedbackSuggestions && (
-                            <div style={{ marginBottom: 8 }}>
-                              <div style={{ fontSize: 10, fontWeight: 600, color: MUTED, textTransform: "uppercase", marginBottom: 4 }}>Improvement suggestions</div>
-                              <p style={{ fontSize: 13, lineHeight: 1.47, color: NEAR_BLACK, margin: 0 }}>{d.feedbackSuggestions}</p>
-                            </div>
-                          )}
-                          {d.feedbackComments && (
-                            <div>
-                              <div style={{ fontSize: 10, fontWeight: 600, color: MUTED, textTransform: "uppercase", marginBottom: 4 }}>Additional comments</div>
-                              <p style={{ fontSize: 13, lineHeight: 1.47, color: NEAR_BLACK, margin: 0 }}>{d.feedbackComments}</p>
-                            </div>
-                          )}
-                        </div>
-                      ))
-                    );
-                  })()}
+                  {manualReviewsForDrill.length === 0 ? (
+                    <EmptyState text="No reviews recorded" />
+                  ) : (
+                    manualReviewsForDrill.map((r) => <TeacherReviewCard key={r.id} review={r} />)
+                  )}
                 </div>
               )}
             </div>
           </div>
         )}
       </section>
+
+      {/* Add review drawer — opens from drill panel header. Analyst/manager/hr only. */}
+      {addReviewOpen && drillData && (
+        <AddTeacherReviewDrawer
+          teacherUserId={String(drillData.tid)}
+          teacherUserName={drillData.name}
+          onClose={() => setAddReviewOpen(false)}
+          onSubmitted={() => {
+            setAddReviewOpen(false);
+            setTab("reviews");
+            flash("Review added");
+          }}
+        />
+      )}
     </>
   );
 }

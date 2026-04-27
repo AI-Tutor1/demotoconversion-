@@ -21,6 +21,10 @@ import {
   ApprovedSession,
   TeacherSession,
   TeacherProfile,
+  TeacherReview,
+  AddTeacherReviewPayload,
+  LookupEnrollmentResult,
+  ListEnrollmentsForTeacherResult,
 } from "./types";
 import { SEED_ACTIVITY } from "./data";
 import { inDateRange, ageDays } from "./utils";
@@ -28,6 +32,7 @@ import { supabase } from "./supabase";
 import { dbRowToDemo, dbRowToLead, demoToInsertRow, pourToDbRows, type DemoRow, type RawLeadRow } from "./transforms";
 import { dbRowToApprovedSession, dbRowToTeacherSession } from "./review-transforms";
 import { dbRowToTeacherProfile } from "./teacher-transforms";
+import { dbRowToTeacherReview, type TeacherReviewRow } from "./teacher-review-transforms";
 import { createSupabaseSync } from "./supabase-sync";
 
 export interface UserProfile {
@@ -129,6 +134,18 @@ interface StoreContextType {
     payload: Partial<TeacherProfile>
   ) => Promise<{ ok: true } | { ok: false; error: string }>;
   processHrRecording: (profileId: string) => Promise<{ ok: true } | { ok: false; error: string }>;
+  // Manual teacher reviews — authored on /teachers Reviews tab
+  teacherReviews: TeacherReview[];
+  addTeacherReview: (
+    payload: AddTeacherReviewPayload
+  ) => Promise<{ ok: true; id: string } | { ok: false; error: string }>;
+  lookupEnrollmentForReview: (enrollmentId: string) => Promise<LookupEnrollmentResult>;
+  listEnrollmentsForTeacher: (teacherId: string) => Promise<ListEnrollmentsForTeacherResult>;
+  confirmDeleteTeacherReview: (
+    id: string,
+    label: string,
+    opts?: { onAfterDelete?: () => void }
+  ) => void;
   leads: Lead[];
   createLead: (studentName: string, leadNumber?: string) => Promise<CreateLeadResult>;
   stats: {
@@ -163,6 +180,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const [sessionTeachers, setSessionTeachers] = useState<{ teacherUserName: string; teacherUserId: string | null }[]>([]);
   const [reviewerNames, setReviewerNames] = useState<Record<string, string>>({});
   const [teacherProfiles, setTeacherProfiles] = useState<TeacherProfile[]>([]);
+  const [teacherReviews, setTeacherReviews] = useState<TeacherReview[]>([]);
   const [leads, setLeads] = useState<Lead[]>([]);
 
   const processedRealtimeIds = useRef<Set<number>>(new Set());
@@ -343,6 +361,20 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     setTeacherProfiles((data ?? []).map(dbRowToTeacherProfile));
   }, []);
 
+  // Manual teacher reviews — readable by every authenticated user (RLS).
+  // Refetch-on-event pattern below; volume is low.
+  const fetchTeacherReviews = useCallback(async () => {
+    const { data, error } = await supabase
+      .from("teacher_reviews")
+      .select("*")
+      .order("created_at", { ascending: false });
+    if (error) {
+      setTeacherReviews([]);
+      return;
+    }
+    setTeacherReviews(((data ?? []) as TeacherReviewRow[]).map(dbRowToTeacherReview));
+  }, []);
+
   const fetchProcessingDemoIds = useCallback(async () => {
     const { data } = await supabase
       .from("task_queue")
@@ -413,6 +445,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         fetchDrafts();
         fetchProcessingDemoIds();
         fetchTeacherProfiles();
+        fetchTeacherReviews();
       } else if (event === "SIGNED_OUT") {
         setDemosRaw([]);
         setLeads([]);
@@ -425,13 +458,14 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         setSessionTeachers([]);
         setReviewerNames({});
         setTeacherProfiles([]);
+        setTeacherReviews([]);
         setLoading(false);
       }
     });
     return () => {
       data.subscription.unsubscribe();
     };
-  }, [fetchDemos, fetchLeads, syncUserProfile, fetchDrafts, fetchProcessingDemoIds, fetchTeacherProfiles]);
+  }, [fetchDemos, fetchLeads, syncUserProfile, fetchDrafts, fetchProcessingDemoIds, fetchTeacherProfiles, fetchTeacherReviews]);
 
   // Flash reader for middleware route-denied redirects (?denied=<prefix>)
   useEffect(() => {
@@ -582,6 +616,23 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       supabase.removeChannel(channel);
     };
   }, [fetchTeacherProfiles]);
+
+  // ─── Realtime: teacher_reviews ───────────────────────────────
+  useEffect(() => {
+    const channel = supabase
+      .channel("teacher-reviews-sync")
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "teacher_reviews" },
+        () => {
+          fetchTeacherReviews();
+        }
+      )
+      .subscribe();
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [fetchTeacherReviews]);
 
   // ─── Realtime: leads ─────────────────────────────────────────
   useEffect(() => {
@@ -1153,6 +1204,193 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     [logActivity, flash]
   );
 
+  // ─── Manual teacher reviews — RPC-backed mutations ────────────
+
+  const lookupEnrollmentForReview = useCallback(
+    async (enrollmentId: string): Promise<LookupEnrollmentResult> => {
+      const id = enrollmentId.trim();
+      if (!id) return { ok: false as const, error: "Enrollment ID is required" };
+
+      const { data, error } = await supabase.rpc("lookup_enrollment_for_review", {
+        p_enrollment_id: id,
+      });
+      if (error) return { ok: false as const, error: error.message };
+
+      const result = (data ?? null) as
+        | {
+            found: boolean;
+            enrollment?: {
+              enrollment_id: string;
+              teacher_id: string;
+              teacher_name: string;
+              student_id: string;
+              student_name: string;
+              subject: string | null;
+              grade: string | null;
+              board: string | null;
+              curriculum: string | null;
+              enrollment_status: string | null;
+              pause_starts: string | null;
+              pause_ends: string | null;
+              is_permanent: boolean;
+              additional_notes: string | null;
+            };
+            recent_sessions?: {
+              id: number;
+              session_id: string;
+              session_date: string | null;
+              scheduled_time: string | null;
+              class_status: string | null;
+              attended_student_1: boolean | null;
+              attended_student_2: boolean | null;
+              notes: string | null;
+              recording_link: string | null;
+            }[];
+          }
+        | null;
+
+      if (!result || !result.found || !result.enrollment) {
+        return { ok: false as const, error: "Enrollment not found" };
+      }
+
+      const e = result.enrollment;
+      return {
+        ok: true as const,
+        enrollment: {
+          enrollmentId: e.enrollment_id,
+          teacherId: e.teacher_id,
+          teacherName: e.teacher_name,
+          studentId: e.student_id,
+          studentName: e.student_name,
+          subject: e.subject ?? "",
+          grade: e.grade ?? "",
+          board: e.board ?? "",
+          curriculum: e.curriculum ?? "",
+          enrollmentStatus: e.enrollment_status ?? "",
+          pauseStarts: e.pause_starts,
+          pauseEnds: e.pause_ends,
+          isPermanent: !!e.is_permanent,
+          additionalNotes: e.additional_notes ?? "",
+        },
+        recentSessions: (result.recent_sessions ?? []).map((s) => ({
+          id: s.id,
+          sessionId: s.session_id,
+          sessionDate: s.session_date,
+          scheduledTime: s.scheduled_time,
+          classStatus: s.class_status ?? "",
+          attendedStudent1: s.attended_student_1,
+          attendedStudent2: s.attended_student_2,
+          notes: s.notes ?? "",
+          recordingLink: s.recording_link ?? "",
+        })),
+      };
+    },
+    []
+  );
+
+  const listEnrollmentsForTeacher = useCallback(
+    async (teacherId: string): Promise<ListEnrollmentsForTeacherResult> => {
+      const id = teacherId.trim();
+      if (!id) return { ok: false as const, error: "Teacher ID is required" };
+
+      const { data, error } = await supabase.rpc("list_enrollments_for_teacher", {
+        p_teacher_id: id,
+      });
+      if (error) return { ok: false as const, error: error.message };
+
+      const rows = (data ?? []) as {
+        enrollment_id: string;
+        student_id: string | null;
+        student_name: string | null;
+        subject: string | null;
+        grade: string | null;
+        curriculum: string | null;
+        enrollment_status: string | null;
+      }[];
+
+      return {
+        ok: true as const,
+        enrollments: rows.map((r) => ({
+          enrollmentId: r.enrollment_id,
+          studentId: r.student_id ?? "",
+          studentName: r.student_name ?? "",
+          subject: r.subject ?? "",
+          grade: r.grade ?? "",
+          curriculum: r.curriculum ?? "",
+          enrollmentStatus: r.enrollment_status ?? "",
+        })),
+      };
+    },
+    []
+  );
+
+  const addTeacherReview = useCallback(
+    async (payload: AddTeacherReviewPayload) => {
+      // Client-side guards mirror the RPC checks for friendlier UX.
+      if (!payload.teacherUserId.trim() || !payload.teacherUserName.trim()) {
+        return { ok: false as const, error: "Teacher is required" };
+      }
+      if (payload.reviewType === "student" && payload.reviewScope !== "enrollment") {
+        return { ok: false as const, error: "Student reviews must be about a specific enrollment" };
+      }
+      if (payload.reviewScope === "enrollment" && !(payload.enrollmentId ?? "").trim()) {
+        return { ok: false as const, error: "Enrollment ID is required when scope is 'enrollment'" };
+      }
+      if (payload.reviewType === "student" && !payload.studentVerbatim.trim()) {
+        return { ok: false as const, error: "Student verbatim quote is required" };
+      }
+      if (!payload.reviewDate.trim()) {
+        return { ok: false as const, error: "Review date is required" };
+      }
+
+      const { data, error } = await supabase.rpc("add_teacher_review", {
+        p_review_type: payload.reviewType,
+        p_review_scope: payload.reviewScope,
+        p_teacher_user_id: payload.teacherUserId,
+        p_teacher_user_name: payload.teacherUserName,
+        p_enrollment_id: payload.reviewScope === "enrollment" ? (payload.enrollmentId ?? null) : null,
+        p_session_id: payload.reviewScope === "enrollment" ? (payload.sessionId ?? null) : null,
+        p_review_date: payload.reviewDate,
+        p_overall_rating: payload.overallRating ?? null,
+        p_summary: payload.summary,
+        p_improvement_notes: payload.improvementNotes,
+        p_student_verbatim: payload.studentVerbatim,
+        p_review_data: payload.reviewData,
+      });
+      if (error) {
+        flash(`Failed to add review: ${error.message}`);
+        return { ok: false as const, error: error.message };
+      }
+      const id = (data as { id: string } | null)?.id ?? "";
+      logActivity("added review for", payload.teacherUserName);
+      // Realtime will push the canonical row; refetch for safety.
+      fetchTeacherReviews();
+      return { ok: true as const, id };
+    },
+    [flash, logActivity, fetchTeacherReviews]
+  );
+
+  const confirmDeleteTeacherReview = useCallback(
+    (id: string, label: string, opts?: { onAfterDelete?: () => void }) => {
+      setConfirm({
+        title: `Delete ${label}?`,
+        msg: "This permanently removes the review and cannot be undone.",
+        onConfirm: async () => {
+          const { error } = await supabase.rpc("delete_teacher_review", { p_id: id });
+          if (error) {
+            flash(`Failed to delete review: ${error.message}`);
+            return;
+          }
+          logActivity("deleted", label);
+          flash("Review deleted");
+          // Realtime DELETE event will splice local state.
+          opts?.onAfterDelete?.();
+        },
+      });
+    },
+    [logActivity, flash]
+  );
+
   // ─── Derived memos ────────────────────────────────────────────
   const rangedDemos = useMemo(
     () => demos.filter((d) => !d.isDraft && inDateRange(d.date, dateRange)),
@@ -1302,6 +1540,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         finalizeTeacherDecision,
         updateTeacherProfile,
         processHrRecording,
+        teacherReviews,
+        addTeacherReview,
+        lookupEnrollmentForReview,
+        listEnrollmentsForTeacher,
+        confirmDeleteTeacherReview,
         stats,
       }}
     >

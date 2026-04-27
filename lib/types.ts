@@ -694,3 +694,182 @@ export interface SessionDraft {
   reviewed_at: string | null;
   created_at: string;
 }
+
+// ── Manual teacher reviews ─────────────────────────────────────
+// Polymorphic via reviewType + reviewData (jsonb on the DB side).
+// Surfaced on /teachers Reviews tab; authored by analyst/manager/hr.
+// Stable FK is teacherUserId (matches sessions.teacher_user_id and
+// enrollments.teacher_id). See migration 20260427000100.
+
+export type ReviewType = "product" | "student" | "excellence";
+
+// 'enrollment' = review tied to a specific enrollment context (subject,
+// grade, curriculum, student) snapshotted at write-time.
+// 'general'    = review of the teacher overall — no enrollment attached.
+// Student reviews are always 'enrollment' (it's the student's voice from
+// a specific class). Product + Excellence can be either, picked in the
+// drawer toggle. See migration 20260427000200_teacher_reviews_v2.sql.
+export type ReviewScope = "enrollment" | "general";
+
+export interface TeacherReview {
+  id: string;
+  reviewType: ReviewType;
+  reviewScope: ReviewScope;
+  reviewDate: string;          // ISO date "YYYY-MM-DD" — the date the review pertains to
+  teacherUserId: string;
+  teacherUserName: string;
+  enrollmentId: string | null;
+  studentUserId: string | null;
+  studentUserName: string | null;
+  sessionId: number | null;
+  subject: string;
+  grade: string;
+  curriculum: string;
+  board: string;
+  overallRating: number | null;
+  summary: string;
+  improvementNotes: string;
+  studentVerbatim: string;
+  reviewData: Record<string, { value: unknown; note?: string }>;
+  createdBy: string | null;
+  createdByName: string;
+  createdByRole: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface RubricQuestionDef {
+  key: string;
+  label: string;
+  type: "score" | "yesno" | "choice" | "text";
+  scoreMax?: number;
+  lowLabel?: string;
+  highLabel?: string;
+  choices?: { value: string; label: string }[];
+  hint?: string;
+  requireNoteWhen?: (value: RubricAnswerValue) => boolean;
+}
+
+export const PRODUCT_REVIEW_RUBRIC: RubricQuestionDef[] = [
+  { key: "methodology",      label: "Teaching methodology",       type: "score", scoreMax: 5, lowLabel: "Weak",      highLabel: "Excellent" },
+  { key: "curriculum_align", label: "Curriculum alignment",       type: "score", scoreMax: 5 },
+  { key: "engagement",       label: "Student engagement",         type: "score", scoreMax: 5 },
+  { key: "differentiation",  label: "Differentiated instruction", type: "score", scoreMax: 5 },
+  { key: "psych_safety",     label: "Psychological safety",       type: "score", scoreMax: 5 },
+];
+
+export const STUDENT_REVIEW_RUBRIC: RubricQuestionDef[] = [
+  { key: "clarity",         label: "How clearly did the teacher explain things?", type: "score", scoreMax: 5, lowLabel: "Confusing", highLabel: "Very clear" },
+  { key: "comfort_asking",  label: "Did you feel comfortable asking questions?",  type: "yesno" },
+  { key: "responsiveness",  label: "How responsive was the teacher to your questions?", type: "score", scoreMax: 5 },
+  { key: "preparation",     label: "How prepared was the teacher for your sessions?",   type: "score", scoreMax: 5 },
+  { key: "would_recommend", label: "Would you recommend this teacher to a friend?",     type: "yesno",
+    requireNoteWhen: (v) => v === false },
+];
+
+export const EXCELLENCE_REVIEW_RUBRIC: RubricQuestionDef[] = [
+  { key: "punctuality",     label: "Punctuality — starts sessions on time",         type: "score", scoreMax: 5, lowLabel: "Often late", highLabel: "Always on time" },
+  { key: "preparation",     label: "Preparation — fully prepared for the session",  type: "score", scoreMax: 5 },
+  { key: "reliability",     label: "Reliability — consistently attends scheduled sessions", type: "score", scoreMax: 5 },
+  { key: "communication",   label: "Communication — proactive about scheduling changes",    type: "score", scoreMax: 5 },
+  { key: "reschedule_freq", label: "Reschedule frequency", type: "choice",
+    choices: [
+      { value: "never",        label: "Never" },
+      { value: "rarely",       label: "Rarely" },
+      { value: "occasionally", label: "Occasionally" },
+      { value: "frequently",   label: "Frequently" },
+    ],
+    requireNoteWhen: (v) => v === "frequently" },
+  { key: "no_shows",        label: "Any no-shows recorded?", type: "yesno",
+    hint: "If yes, describe in the note",
+    requireNoteWhen: (v) => v === true },
+  { key: "cancellation",    label: "Cancellation handling — clear, advance notice", type: "score", scoreMax: 5 },
+  // — Agility —
+  { key: "adaptability",       label: "Adaptability — adjusts methodology when students struggle", type: "score", scoreMax: 5 },
+  { key: "feedback_response",  label: "Responsiveness to feedback — acts on prior-session feedback", type: "score", scoreMax: 5 },
+  { key: "pace_flexibility",   label: "Pace flexibility — adjusts pace mid-session as needed",       type: "score", scoreMax: 5 },
+];
+
+export const RUBRIC_BY_TYPE: Record<ReviewType, RubricQuestionDef[]> = {
+  product:    PRODUCT_REVIEW_RUBRIC,
+  student:    STUDENT_REVIEW_RUBRIC,
+  excellence: EXCELLENCE_REVIEW_RUBRIC,
+};
+
+export const REVIEW_TYPE_LABEL: Record<ReviewType, string> = {
+  product:    "Product",
+  student:    "Student",
+  excellence: "Excellence",
+};
+
+export const REVIEW_TYPE_COLOR: Record<ReviewType, string> = {
+  product:    "#0071e3",  // BLUE
+  student:    "#1b8a4a",
+  excellence: "#7B61FF",
+};
+
+export interface AddTeacherReviewPayload {
+  reviewType: ReviewType;
+  reviewScope: ReviewScope;
+  reviewDate: string;          // ISO date "YYYY-MM-DD"
+  teacherUserId: string;
+  teacherUserName: string;
+  enrollmentId: string | null;
+  sessionId: number | null;
+  overallRating: number | null;
+  summary: string;
+  improvementNotes: string;
+  studentVerbatim: string;
+  reviewData: Record<string, { value: RubricAnswerValue; note?: string }>;
+}
+
+// Lite shapes used by the manual-review enrollment lookup. Subset of
+// Enrollment / Session — only fields the drawer needs to prefill.
+export interface EnrollmentLookupLite {
+  enrollmentId: string;
+  teacherId: string;
+  teacherName: string;
+  studentId: string;
+  studentName: string;
+  subject: string;
+  grade: string;
+  board: string;
+  curriculum: string;
+  enrollmentStatus: string;
+  pauseStarts: string | null;
+  pauseEnds: string | null;
+  isPermanent: boolean;
+  additionalNotes: string;
+}
+
+export interface RecentSessionLite {
+  id: number;
+  sessionId: string;
+  sessionDate: string | null;
+  scheduledTime: string | null;
+  classStatus: string;
+  attendedStudent1: boolean | null;
+  attendedStudent2: boolean | null;
+  notes: string;
+  recordingLink: string;
+}
+
+export type LookupEnrollmentResult =
+  | { ok: true; enrollment: EnrollmentLookupLite; recentSessions: RecentSessionLite[] }
+  | { ok: false; error: string };
+
+// Subset returned by list_enrollments_for_teacher — what the manual-review
+// drawer's enrollment dropdown needs to render and disambiguate options.
+export interface EnrollmentSummary {
+  enrollmentId: string;
+  studentId: string;
+  studentName: string;
+  subject: string;
+  grade: string;
+  curriculum: string;
+  enrollmentStatus: string;
+}
+
+export type ListEnrollmentsForTeacherResult =
+  | { ok: true; enrollments: EnrollmentSummary[] }
+  | { ok: false; error: string };
