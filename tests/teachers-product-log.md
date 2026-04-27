@@ -14,6 +14,8 @@ This doc is a **manual checklist**, not an automated test suite. It pairs with t
 - Negative-test philosophy: `memory/feedback_negative_tests_for_joined_surfaces.md`
 - SQL probe discipline (one statement per MCP call): `memory/reference_supabase_mcp_single_statement.md`
 
+**Sibling tab — not in scope here:** The `/teachers` drill panel also has a **Reviews** tab (manual reviews authored via the `+ Add review` drawer — Product / Student / Excellence types). That surface is independent of approved sessions and lives in a separate table (`teacher_reviews`). See `memory/project_teacher_reviews.md` for that pipeline; this doc covers the Product log tab only.
+
 ---
 
 ## Audit findings (as of 2026-04-19)

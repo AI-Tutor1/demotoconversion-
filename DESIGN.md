@@ -409,14 +409,32 @@ Approved-sessions feed for a teacher profile (and, later, a student profile). Re
 - Approval bar shows acceptance percentage
 - Layout: `.session-scorecard-grid` (responsive, 1-col on mobile)
 
-### ScoreScale (`components/hr-interview-drawer.tsx` → `ScoreScale`)
-Compact 1–N button scale for scoring rubric questions inline inside drawers and narrow cards. **Fixed-size buttons only** (≈34×30 px) — never `flex: 1`, or the row stretches to container width and becomes the "giant rectangles" bug (see `memory/feedback_drawer_button_flex_overflow.md`). Click the currently-selected button to clear (matches `Stars` / POUR tag toggle pattern). Anchor labels (`lowLabel` ↔ `highLabel`) render as a 10px row BELOW the scale — optional.
+### ScoreScale (`components/rubric.tsx` → `ScoreScale`)
+Compact 1–N button scale for scoring rubric questions inline inside drawers and narrow cards. **Fixed-size buttons only** (≈34×30 px) — never `flex: 1`, or the row stretches to container width and becomes the "giant rectangles" bug (see `memory/feedback_drawer_button_flex_overflow.md`). Click the currently-selected button to clear (matches `Stars` / POUR tag toggle pattern). Anchor labels (`lowLabel` ↔ `highLabel`) render as a 10px row BELOW the scale — optional. Lifted from `hr-interview-drawer.tsx` 2026-04-27 so the HR drawer + manual-review drawer (`add-teacher-review-drawer.tsx`) share one source.
 
-### Collapsible Note field (`components/hr-interview-drawer.tsx` → `RubricQuestion` note branch)
+### Collapsible Note field (`components/rubric.tsx` → `RubricQuestion` note branch)
 Secondary-input pattern for rubric questions. Default-collapsed behind a `+ Add note` text button in Apple Blue. Auto-opens when existing content is present on mount OR when a question's `requireNoteWhen(value)` predicate fires (e.g. red flags = Yes). Required state: red 1px border + micro-label "Required" in `#B71C1C`. Two rows default (`<textarea rows={2}>`). Use this whenever a score/choice needs optional context but you don't want the form to feel heavy by default.
 
-### Structured rubric card (`components/hr-interview-drawer.tsx` → `RubricQuestion`)
-Inline header-row layout for rubric-style forms: label on the left, answer control (ScoreScale / yes-no pills / select / textarea) on the right of the same row. Card bg `LIGHT_GRAY`, border `#e8e8ed`, radius `10px`, padding `10px 12px`. Matches the read-only scorecard-report Q-card treatment so write + read modes are visually sibling. Questions are grouped into categories; the category header uses `.section-label` (never inline styling).
+### Structured rubric card (`components/rubric.tsx` → `RubricQuestion`)
+Inline header-row layout for rubric-style forms: label on the left, answer control (ScoreScale / yes-no pills / select / textarea) on the right of the same row. Card bg `LIGHT_GRAY`, border `#e8e8ed`, radius `10px`, padding `10px 12px`. Matches the read-only scorecard-report Q-card treatment so write + read modes are visually sibling. Accepts the structural `RubricQuestionLike` prop type — both `HrInterviewQuestion` (HR pipeline) and `RubricQuestionDef` (manual reviews on `/teachers`, see `RUBRIC_BY_TYPE` in `lib/types.ts`) are assignable. Questions are grouped into categories; the category header uses `.section-label` (never inline styling).
+
+### TeacherReviewCard (`components/teacher-review-card.tsx`)
+Read-only card rendered on the `/teachers` Reviews tab for one row of `teacher_reviews`. Composition (top → bottom):
+1. **Type pill** — color-coded: Product = `BLUE` (`#0071e3`), Student = `#1b8a4a`, Excellence = `#7B61FF`. Uppercase, 10px, 700 weight, white-on-color.
+2. **Scope badge** — neutral pill: `General` (light gray bg, muted text) or `Enrollment` (light blue bg, blue text).
+3. **Stars** (optional, only when `overall_rating IS NOT NULL`) inline with the pills.
+4. **Date row** — `review_date` formatted (e.g. "Apr 25, 2026"). If the analyst back-dated, append `(logged YYYY-MM-DD)` in muted parentheses. Then ` · {createdByName} ({createdByRole})`.
+5. **Snapshot context line** — only for `enrollment` scope. Format: `{subject} · {grade} · {curriculum}` then ` · enrollment {enrollmentId} · {studentUserName}`.
+6. **Summary** paragraph (always, falls back to "—").
+7. **Rubric grid** — `repeat(auto-fit, minmax(200px, 1fr))`, each cell shows label + value (`N/5`, Yes/No, choice label) + optional italic note.
+8. **Verbatim block** — Student type only. Blockquote with green left border (`#1b8a4a`), italic body, mint background.
+9. **Improvement notes** — full-width muted block.
+10. **Manager-only delete button** — top-right corner, follows the **Destructive action button** pattern below.
+
+Goes through `confirmDeleteTeacherReview(id, label, { onAfterDelete? })` from `useStore()`; never wires to `supabase.from(...).delete()` inline.
+
+### Manual-review drawer scope toggle (`components/add-teacher-review-drawer.tsx`)
+Two-pill horizontal toggle directly under the type selector. Pills are 160px min-width, left-aligned text, blue when active. Hidden entirely when `reviewType === "student"` (Student is always enrollment-scoped). Switching to General clears the enrollment lookup state to avoid stale snapshots leaking into the submission. Pattern intentionally matches the HR drawer's tab strip aesthetic — same fixed sizing, same active-state treatment — so the two drawers feel like siblings.
 
 ### Destructive action button (delete)
 Red-on-white pill for manager-only hard-delete across all surfaces. Never a solid red button (too dominant for a destructive action next to primary buttons); always `pill pill-outline` with a red text + soft red border. Two sizes only:
@@ -618,9 +636,9 @@ When building any new interactive form or drawer:
 | Text input / select / textarea | `.apple-input`, `.apple-select`, `.apple-textarea` | Typography + CSS classes above |
 | Searchable dropdown | `components/searchable-select.tsx` | Component Patterns → SearchableSelect |
 | Rating (1–5 stars) | `components/ui.tsx` → `Stars` | Component Patterns → Star Rating |
-| Score scale (numeric, 1–N) | `components/hr-interview-drawer.tsx` → `ScoreScale` | ScoreScale above |
-| Yes/No + clear | `components/hr-interview-drawer.tsx` → yes/no pills in `RubricQuestion` | (same file) |
-| Collapsible secondary note | `components/hr-interview-drawer.tsx` → note branch in `RubricQuestion` | Collapsible Note field above |
+| Score scale (numeric, 1–N) | `components/rubric.tsx` → `ScoreScale` | ScoreScale above |
+| Yes/No + clear | `components/rubric.tsx` → yes/no pills in `RubricQuestion` | (same file) |
+| Collapsible secondary note | `components/rubric.tsx` → note branch in `RubricQuestion` | Collapsible Note field above |
 | Primary / secondary button | `.pill .pill-blue`, `.pill .pill-outline` | (CSS classes section) |
 
 If a new control doesn't exist here, propose it in DESIGN.md *before* implementing, not after. Three sibling controls in a PR without a prior discussion is a yellow flag.

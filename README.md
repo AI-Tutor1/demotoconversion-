@@ -74,6 +74,7 @@ npm run build      # production TypeScript check + bundle
 | Database | Supabase (Postgres + Auth + Realtime) |
 | Auth | `@supabase/ssr` (cookie-based, SSR-safe) |
 | Product Review | Enrollment + Session CSV upload → AI scorecard (same 8-Q framework) → approved scorecards surface on `/teachers` Product log |
+| Manual Teacher Reviews | First-class `teacher_reviews` table + drawer on `/teachers` Reviews tab. Three types (Product / Student / Excellence) with scope toggle (specific enrollment vs general overall teacher), user-controlled review date, type-specific rubrics, enrollment dropdown sourced from the teacher's classes. Authored by analyst/manager/hr; manager-only delete. |
 | Deployment (planned) | Vercel (frontend) + Supabase Cloud |
 
 Dependencies are minimal: `next`, `react`, `react-dom`, `recharts`, `@supabase/supabase-js`, `@supabase/ssr`. No state manager, no component library, no date library, no CSS framework — see MEMORY.md Part 6 for rejected approaches.
@@ -95,14 +96,18 @@ components/
   nav.tsx                  # Role-filtered nav + user menu
   ui.tsx                   # StatusBadge, Field, Stars, EmptyState, SectionHeader
   toast-confirm.tsx        # Toast + confirm modal
+  rubric.tsx               # Shared RubricQuestion + ScoreScale (HR drawer + manual review drawer)
+  add-teacher-review-drawer.tsx  # Manual review entry on /teachers (Product/Student/Excellence)
+  teacher-review-card.tsx  # Read-only card for one teacher_reviews row
 lib/
-  types.ts                 # Demo type, design tokens, lookups
+  types.ts                 # Demo + TeacherReview + ReviewType/Scope/Rubric definitions, design tokens
   utils.ts                 # ageDays, formatMonth, inDateRange, exportCSV, etc.
   data.ts                  # SEED_ACTIVITY only (demos come from Supabase)
   store.tsx                # Supabase-backed Context (reads/writes/realtime/dedup)
   supabase.ts              # Browser client singleton
   supabase-server.ts       # Server client (cookies-based)
   transforms.ts            # DB↔App row mapping (snake_case ↔ camelCase, POUR cat↔category)
+  teacher-review-transforms.ts  # DB↔App row mapping for teacher_reviews
 middleware.ts              # Session check + role gate + cookie refresh
 public/
   tuitional-logo.svg       # Brand mark rendered in the nav bar
@@ -119,7 +124,7 @@ supabase/migrations/       # SQL migrations (timestamp-prefixed)
 | `/sales` | Sales queue with filters, bulk actions, Step 10 accountability, recording link |
 | `/kanban` | 5-column board driven by `workflow_stage` with drag-drop + confirmation |
 | `/analytics` | Two tabs (Demos \| Sessions, `?tab=sessions`). **Demos** — conversion funnel, POUR, QA scorecard, accountability, aging, subject demand, lead pipeline, agent leaderboard. **Sessions** (analyst + manager only) — interpretation bands, monthly volume + avg score, Q1–Q8 rubric ratios, POUR, subject/grade/curriculum breakdown, ingest→approved turnaround, attendance KPIs, teacher leaderboard with per-teacher drawer, reviewer leaderboard. All computed from `useStore().rangedApprovedSessions`. |
-| `/teachers` | Teacher cards with sort + drill-down (analyst, manager, hr) |
+| `/teachers` | Teacher cards with sort + drill-down. Drill panel has 4 tabs (Dashboard / Product log / Demo logs / Reviews). **Reviews tab** shows manually-authored teacher reviews — Product / Student / Excellence types, with scope toggle (specific enrollment vs general overall teacher), user-controlled review date, enrollment dropdown sourced from this teacher's classes, rubrics from `RUBRIC_BY_TYPE` in `lib/types.ts`. Authored by analyst / manager / hr via `+ Add review` drawer; manager-only delete. |
 | `/teachers/[id]` | Teacher profile: tabs for Profile · Rates · Schedule · Demos · Interview (hr/manager only). Edit button goes through whitelisted RPC. |
 | `/hr` | HR workspace — candidate intake, interview + rubric, scorecard, rates, schedule, Approved/Pending/Rejected decision. Role-gated to hr + manager. |
 | `/enrollments` | Product Review: enrollment CSV upload + filters + roster table (analyst, manager) |

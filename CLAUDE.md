@@ -139,9 +139,12 @@ UNDERSTAND → LOCATE → PLAN → IMPLEMENT → VERIFY → REPORT
 │   ├── session-status-badge.tsx  # Processing status badge (pending/processing/scored/approved/failed)
 │   ├── session-draft-review.tsx  # Session QA scorecard review (8-question, approve/reject)
 │   ├── teacher-product-log.tsx   # Approved sessions list for a teacher/student (accepts optional filterFn to narrow via drill filters; shared with future /students/[id])
+│   ├── add-teacher-review-drawer.tsx # Right-slide drawer to author manual reviews on /teachers (Product / Student / Excellence) — scope toggle + review-date input + enrollment dropdown + rubric
+│   ├── teacher-review-card.tsx   # Pure-presentational card for one TeacherReview — type pill, scope badge, review_date, rubric grid, manager-only delete
+│   ├── rubric.tsx                # Shared RubricQuestion + ScoreScale (lifted from hr-interview-drawer 2026-04-27); used by both HR + manual-review drawers
 │   └── (backend: app/scheduler.py — AsyncIOScheduler for auto-retry of failed sessions)
 ├── lib/
-│   ├── types.ts                  # Demo type, design tokens, lookup arrays
+│   ├── types.ts                  # Demo + TeacherReview + ReviewType/Scope/Rubric definitions, design tokens, lookup arrays
 │   ├── utils.ts                  # Helper functions
 │   ├── data.ts                   # SEED_ACTIVITY only (demos come from Supabase)
 │   ├── store.tsx                 # React Context + Supabase reads/writes/realtime
@@ -149,7 +152,8 @@ UNDERSTAND → LOCATE → PLAN → IMPLEMENT → VERIFY → REPORT
 │   ├── supabase-server.ts        # Server Supabase client (cookies-based)
 │   ├── transforms.ts             # dbRowToDemo / demoToInsertRow / demoUpdatesToDb
 │   ├── csv-parser.ts             # Client-side CSV parser + column mappers (enrollments, sessions)
-│   └── review-transforms.ts      # DB row ↔ camelCase for enrollments + sessions
+│   ├── review-transforms.ts      # DB row ↔ camelCase for enrollments + sessions
+│   └── teacher-review-transforms.ts  # DB row ↔ camelCase for teacher_reviews (manual reviews on /teachers)
 ├── middleware.ts                 # Route protection + auth refresh
 ├── public/
 │   └── tuitional-logo.svg        # Brand mark rendered in the nav bar
@@ -222,9 +226,10 @@ const {
   confirmDeleteDemo,      // confirmDeleteDemo(demo, { onAfterDelete? }) — manager hard-delete with confirm modal + cascade
   confirmBulkDeleteDemos, // confirmBulkDeleteDemos(demos, { onAfterDelete? }) — one modal, batched delete for bulk selections (/sales action bar)
   confirmDeleteSession,   // confirmDeleteSession(id, label, { onAfterDelete? }) — manager hard-delete on sessions table
-  teacherReviews,         // Manual reviews authored on /teachers (Product/Student/Excellence) — visible to all authenticated; FK on teacher_user_id
-  addTeacherReview,       // addTeacherReview(payload) — analyst/manager/hr; calls add_teacher_review SECURITY DEFINER RPC
-  lookupEnrollmentForReview, // lookupEnrollmentForReview(id) — used by Student/Excellence flows; returns enrollment + 5 most recent sessions
+  teacherReviews,         // Manual reviews authored on /teachers (Product/Student/Excellence) — visible to all authenticated; FK on teacher_user_id; scope='enrollment'|'general'; user-controlled review_date
+  addTeacherReview,       // addTeacherReview(payload) — analyst/manager/hr; calls add_teacher_review SECURITY DEFINER RPC (12-arg signature: review_type/scope/teacher/enrollment/session/date/rating/summary/notes/verbatim/data)
+  lookupEnrollmentForReview, // lookupEnrollmentForReview(id) — DEFINER RPC; used after the user picks an enrollment from the dropdown; returns enrollment + 5 most recent sessions
+  listEnrollmentsForTeacher, // listEnrollmentsForTeacher(teacherId) — DEFINER RPC; populates the enrollment dropdown in the manual-review drawer
   confirmDeleteTeacherReview,// confirmDeleteTeacherReview(id, label, { onAfterDelete? }) — manager-only via delete_teacher_review RPC
   notifications,   // Computed: pending demos aged 3+ days
   dateRange, setDateRange,
@@ -523,12 +528,12 @@ done
 - Do NOT filter cross-entity lists (Product log, Teacher drill-down, /students/[id]) by `teacher_user_name` / `student_user_name` or any denormalised string. Always join by `teacher_user_id` / `student_user_id` — the stable FK. See `memory/feedback_join_by_stable_fk.md` for the 2026-04-19 incident that motivated this.
 - Do NOT resolve teacher name ↔ tid from the `TEACHERS` array in `lib/types.ts` — it's deprecated. Use `useStore().approvedTeachers` (DB-backed, status='approved' only) and the `teacherFullName()` helper from `lib/teacher-transforms.ts`. The TEACHERS array remains in-file purely for legacy reference until a cleanup PR removes it; any new code reading from it is a bug. See `memory/project_hr_pipeline.md`.
 - Do NOT mutate `teacher_profiles.tid` / `status` / `approved_*` / `rejected_*` directly from the frontend. The only sanctioned paths are the `finalize_teacher_decision` RPC (hr/manager only) and the invariant trigger enforces `status='approved' ⇔ tid IS NOT NULL`. `update_teacher_profile` RPC (used by the Edit button on `/teachers/[id]`) silently drops those keys from the payload — don't rely on that drop as a validation signal.
-- Do NOT use `flex: 1` on score scales or pill button rows inside side drawers or narrow cards. It stretches buttons to container width, producing giant rectangles (2026-04-20 HR rubric bug). Use fixed-size buttons (≈34×30 for score scales, ≈52px min-width for yes/no pills). Canonical source: `components/hr-interview-drawer.tsx` → `ScoreScale`. See `memory/feedback_drawer_button_flex_overflow.md`.
+- Do NOT use `flex: 1` on score scales or pill button rows inside side drawers or narrow cards. It stretches buttons to container width, producing giant rectangles (2026-04-20 HR rubric bug). Use fixed-size buttons (≈34×30 for score scales, ≈52px min-width for yes/no pills). Canonical source: `components/rubric.tsx` → `ScoreScale` (lifted from `hr-interview-drawer.tsx` 2026-04-27 so HR drawer + manual-review drawer share one source). See `memory/feedback_drawer_button_flex_overflow.md`.
 - Do NOT name PL/pgSQL RPC parameters the same as the columns they write to. `SET teaching_matrix = teaching_matrix` with both as a param + column is ambiguous and Postgres rejects it. Prefix every RPC parameter with `p_*` (`p_id`, `p_teaching_matrix`, etc.). Renaming a param requires `DROP FUNCTION … ; CREATE FUNCTION …` — plan ahead. See `memory/feedback_plpgsql_param_name_collision.md`.
 - Do NOT have an RPC enqueue a `queued` row in `task_queue` when a backend router will also try to start a task for the same action. The backend's idempotency check will see the RPC's row and 409 forever. The backend owns task_queue lifecycle; the RPC stops at writing user-facing state. See `memory/feedback_never_pre_enqueue_task_queue_in_rpc.md`.
 - Do NOT create a new public table expecting live UI updates without adding it to `supabase_realtime` publication in the same migration. Logical replication silently drops unpublished tables; `postgres_changes` subscriptions return zero events. See `memory/feedback_realtime_publication_check.md`.
 - Do NOT call `supabase.from("demos" | "sessions").delete()` directly from a page. Use `confirmDeleteDemo(demo, { onAfterDelete? })` or `confirmDeleteSession(id, label, { onAfterDelete? })` from `useStore()`. The helpers wrap the confirm modal + activity log + toast + cascade semantics in one place; bypassing them drifts the copy, skips the audit trail, and (for demos) bypasses the `setDemos` diff-writer that handles POUR/draft/accountability/task_queue cascade. Manager-only gate (`user?.role === "manager"`) stays at every call site — helper trusts the caller.
-- Do NOT call `supabase.from("teacher_reviews").insert/.update/.delete` directly from a page. Use `addTeacherReview(payload)` and `confirmDeleteTeacherReview(id, label, { onAfterDelete? })` from `useStore()`. All writes go through SECURITY DEFINER RPCs (`add_teacher_review`, `delete_teacher_review`) that enforce the role gate (insert: analyst/manager/hr; delete: manager-only) — bypassing them either fails RLS (no INSERT/UPDATE/DELETE policy on the table) or drifts validation. For enrollment lookup on Student + Excellence reviews, use `lookupEnrollmentForReview(id)` — it calls the `lookup_enrollment_for_review` RPC which also returns the 5 most recent sessions for context. See migration `20260427000100_create_teacher_reviews.sql` and `memory/project_teacher_reviews.md`.
+- Do NOT call `supabase.from("teacher_reviews").insert/.update/.delete` directly from a page. Use `addTeacherReview(payload)` and `confirmDeleteTeacherReview(id, label, { onAfterDelete? })` from `useStore()`. All writes go through SECURITY DEFINER RPCs (`add_teacher_review`, `delete_teacher_review`) that enforce the role gate (insert: analyst/manager/hr; delete: manager-only) — bypassing them either fails RLS (no INSERT/UPDATE/DELETE policy on the table) or drifts validation. For the enrollment dropdown in the drawer, use `listEnrollmentsForTeacher(teacherId)`; for the post-select context fetch, use `lookupEnrollmentForReview(id)`. **Both lookup RPCs are SECURITY DEFINER** — under `INVOKER` they fail silently for HR users because the inner SELECT against `enrollments` is RLS-blocked (analyst+manager only). See migrations `20260427000100_create_teacher_reviews.sql` (table + first RPCs), `20260427000200_teacher_reviews_v2.sql` (scope toggle + review_date + Agility), `20260427000300_list_enrollments_for_teacher.sql` (dropdown RPC + DEFINER promotion), and `memory/project_teacher_reviews.md`.
 
 ## When In Doubt
 
@@ -539,6 +544,6 @@ done
 - **Phase 3 AI agent prompts** → CONTEXT.md (AI Agent Prompts section)
 - **Setup or deploy** → README.md
 - **Adding a filter panel (dropdowns / ID searches / date ranges) to any list page** → `ui-qa-demo-to-conversion` skill, Section 9 "Filter UIs — the recipe that passes first-review". Canonical example: `app/enrollments/page.tsx`.
-- **Building a new page, drawer, tab strip, score scale, or rubric card** → `DESIGN.md` §Layout Templates. Copy the snippet; don't improvise layout. Canonical sources: `app/hr/page.tsx` (page), `components/hr-interview-drawer.tsx` (drawer + tabs + ScoreScale + RubricQuestion + collapsible Note).
+- **Building a new page, drawer, tab strip, score scale, or rubric card** → `DESIGN.md` §Layout Templates. Copy the snippet; don't improvise layout. Canonical sources: `app/hr/page.tsx` (page), `components/hr-interview-drawer.tsx` (drawer + tabs + collapsible Note), `components/rubric.tsx` (`ScoreScale` + `RubricQuestion`), `components/add-teacher-review-drawer.tsx` (drawer with scope toggle + form-side date input + dropdown lookup).
 - Run the Four Laws check after every file edit
 - Run `npm run build` before committing (but not while `npm run dev` is running)

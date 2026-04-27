@@ -255,6 +255,24 @@ When `marketing: true`, additional marketing comments should be collected. The U
 ### Month Auto-Derivation
 `formatMonth("2026-04-12")` returns `"Apr 2026"`. This is displayed as a blue badge below the date picker in the Analyst form. The user never types the month — it derives from the date.
 
+### Manual Teacher Reviews (2026-04-27)
+
+The `/teachers` Reviews tab shows manually-authored reviews from a first-class `teacher_reviews` table — **not** demo-derived feedback (which now lives only on the Demo logs tab). Three review types share one polymorphic schema:
+
+| Type | Scope options | Required fields |
+|------|---------------|-----------------|
+| Product | enrollment OR general | summary |
+| Student | always enrollment | summary + `student_verbatim` (the student's voice, transcribed by the analyst) |
+| Excellence | enrollment OR general | summary; rubric covers scheduling/punctuality/reliability/cancellation/Agility (adaptability, feedback responsiveness, pace flexibility) |
+
+Authoring is gated to **analyst / manager / hr**; delete is **manager-only**. All writes flow through SECURITY DEFINER RPCs (`add_teacher_review`, `delete_teacher_review`) — the table has no INSERT/UPDATE/DELETE policy, so direct table writes from the frontend will fail RLS even for managers. The two read RPCs (`lookup_enrollment_for_review`, `list_enrollments_for_teacher`) are also DEFINER because the underlying `enrollments` table's RLS is analyst+manager only — HR users would otherwise see empty lookups.
+
+The drawer's enrollment dropdown is sourced per-teacher (from `list_enrollments_for_teacher`); analysts pick from the list rather than typing IDs. `review_date` is user-controlled (defaults to today; can be back-dated when an analyst is logging an old review). The review snapshots subject/grade/curriculum/student at write-time so display doesn't break if the enrollment is later edited.
+
+**Naming overlap caveat.** "Product Review" elsewhere in this codebase (CONTEXT.md, README) refers to the **AI-driven sessions/scorecard pipeline** (`/enrollments` + `/sessions`). The "Product" review *type* on `/teachers` is a different concept — a free-form QA review of one teacher's teaching quality. Different table (`teacher_reviews` vs `sessions`/`session_drafts`), no AI involvement, no cascade.
+
+Migrations: `20260427000100` (table + first RPCs + realtime), `20260427000200` (scope toggle + review_date + Agility rubric), `20260427000300` (enrollment dropdown RPC + DEFINER promotion of lookup). See [memory/project_teacher_reviews.md](memory/project_teacher_reviews.md) for the full architecture.
+
 ---
 
 ## Part 8: Environment & Deployment Context

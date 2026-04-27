@@ -34,6 +34,26 @@ Both live in `supabase/migrations/20260416000102_upsert_rpcs.sql` and use `SECUR
 
 All four live in `supabase/migrations/20260421000105_teacher_profiles_rpcs.sql`. See [memory/project_hr_pipeline.md](memory/project_hr_pipeline.md) for the full architecture (tables, RLS matrix, lifecycle, trims).
 
+### Manual Teacher Review RPCs (called from `/teachers` drill panel)
+
+Manually-authored reviews about a teacher live in `public.teacher_reviews` (polymorphic table — Product / Student / Excellence reviews share one shape with rubric answers in JSONB). Independent from the demo pipeline AND from the Product Review (sessions) pipeline above. See [memory/project_teacher_reviews.md](memory/project_teacher_reviews.md) for the full architecture.
+
+| RPC | Args | Returns | Security | Purpose |
+|-----|------|---------|----------|---------|
+| `add_teacher_review(p_review_type text, p_review_scope text, p_teacher_user_id text, p_teacher_user_name text, p_enrollment_id text, p_session_id bigint, p_review_date date, p_overall_rating int, p_summary text, p_improvement_notes text, p_student_verbatim text, p_review_data jsonb)` | 12 args — review type/scope/teacher FK/enrollment/session/date/rating/summary/notes/verbatim/rubric data | `jsonb` `{id}` | **DEFINER** (analyst+manager+hr) | Insert a manual review. Snapshots enrollment context (subject/grade/curriculum/student) when `scope='enrollment'`; writes NULL/empty for those fields when `scope='general'`. Enforces invariants (Student must be enrollment-scoped; Student requires verbatim quote). |
+| `lookup_enrollment_for_review(p_enrollment_id text)` | Enrollment ID | `jsonb` `{found, enrollment, recent_sessions[5]}` | **DEFINER** (analyst+manager+hr) | Called after the user picks an enrollment from the dropdown — fetches the full enrollment row + 5 most recent sessions for context. DEFINER because `enrollments` RLS is analyst/manager only; HR would otherwise see `{found:false}`. |
+| `list_enrollments_for_teacher(p_teacher_id text)` | Teacher ID (matches `teacher_user_id`) | `jsonb[]` of `{enrollment_id, student_id, student_name, subject, grade, curriculum, enrollment_status}` | **DEFINER** (analyst+manager+hr) | Populates the enrollment dropdown in the manual-review drawer. Same DEFINER rationale. |
+| `delete_teacher_review(p_id uuid)` | Review id | `void` | **DEFINER** (manager-only) | Hard delete via `confirmDeleteTeacherReview` store helper. |
+
+Migrations: `20260427000100_create_teacher_reviews.sql` (table + first RPCs + realtime publication), `20260427000200_teacher_reviews_v2.sql` (`review_scope` + `review_date` + Agility rubric questions + RPC signature change), `20260427000300_list_enrollments_for_teacher.sql` (dropdown RPC + DEFINER promotion of `lookup_enrollment_for_review`).
+
+**Three review types:**
+- **Product** — free-form QA review of teaching quality. Scope: enrollment OR general.
+- **Student** — analyst transcribes student-voiced feedback (required `student_verbatim`). Scope: always enrollment (it's the student's voice from a specific class).
+- **Excellence** — scheduling, punctuality, attendance, professional reliability + Agility (adaptability, feedback responsiveness, pace flexibility). Scope: enrollment OR general.
+
+**Distinction from "Product Review" (above):** the Product Review section refers to the sessions/scorecard pipeline driven by `/enrollments` + `/sessions` + AI agents. **Manual teacher reviews** are unrelated — a different table (`teacher_reviews`), different surface (`/teachers` Reviews tab), no AI involvement, no sessions cascade. The naming overlap is unfortunate but the term "Product" is established in both contexts.
+
 ### Backend endpoints (FastAPI on `:8000`)
 
 **Demo pipeline endpoints** require `Authorization: Bearer <supabase-access-token>` and enforce role. Both are **idempotent**:
